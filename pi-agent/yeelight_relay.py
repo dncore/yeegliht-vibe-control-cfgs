@@ -107,19 +107,19 @@ def _solid(bulb, r, g, b, bri=20):
 def _breathe(bulb, r, g, b, bri=50):
     dr, dg, db = max(1, r//20), max(1, g//20), max(1, b//20)
     flow = Flow(count=6, transitions=[
-        RGBTransition(r, g, b, duration=50,   brightness=bri),
-        RGBTransition(r, g, b, duration=1000, brightness=bri),
-        RGBTransition(r, g, b, duration=300,  brightness=bri),
-        RGBTransition(dr, dg, db, duration=1500, brightness=1),
+        RGBTransition(r, g, b, duration=50,   brightness=bri),      # 瞬间到位
+        RGBTransition(dr, dg, db, duration=1500, brightness=1),      # 线性变暗
+        RGBTransition(dr, dg, db, duration=200, brightness=1),       # 暗部停留
+        RGBTransition(r, g, b, duration=1500, brightness=bri),       # 线性变亮
     ])
     bulb.start_flow(flow)
 
 def _flash(bulb, r, g, b, bri=40):
     dr, dg, db = max(1, r//30), max(1, g//30), max(1, b//30)
     flow = Flow(count=10, transitions=[
-        RGBTransition(r, g, b, duration=50,   brightness=bri),
-        RGBTransition(r, g, b, duration=300,  brightness=bri),
-        RGBTransition(dr, dg, db, duration=300, brightness=1),
+        RGBTransition(r, g, b, duration=100,  brightness=bri),      # 到位
+        RGBTransition(dr, dg, db, duration=300, brightness=1),       # 线性变暗
+        RGBTransition(r, g, b, duration=300, brightness=bri),        # 线性变亮
     ])
     bulb.start_flow(flow)
 

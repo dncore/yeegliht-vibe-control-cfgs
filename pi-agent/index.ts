@@ -16,9 +16,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Key } from "@earendil-works/pi-tui";
 import { exec, execSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { env, pid, homedir } from "node:process";
+import { env, pid } from "node:process";
+import { homedir } from "node:os";
 
 // ═══════════════ 常量 ═══════════════
 
@@ -107,83 +108,99 @@ const RELAY_PID_FILE = join(PLUGIN_DIR, "relay.pid");
 let relayProcess: ChildProcess | null = null;
 let config: YeelightConfig = { bulbIp: "", relayPort: 0 };
 let warned = false;
+// 调试日志（默认关闭，排查问题时设 DEBUG=true）
+function log(...args: any[]) { /* DEBUG=true 时取消注释: console.log("[yeelight]", ...args); */ }
 
 function getRelayUrl(): string {
   return `http://127.0.0.1:${config.relayPort}`;
 }
 
 function killAllRelayProcesses(): void {
+  log("清理旧 relay 进程...");
   // 方法1: 通过 PID 文件杀
   try {
     if (existsSync(RELAY_PID_FILE)) {
       const savedPid = parseInt(readFileSync(RELAY_PID_FILE, "utf-8").trim(), 10);
+      log("  PID 文件:", savedPid);
       if (savedPid) {
         try { process.kill(savedPid, "SIGTERM"); } catch {}
-        try { execSync(`taskkill //PID ${savedPid} //F`, { windowsHide: true, timeout: 3000 }); } catch {}
+        // taskkill 静默，进程不存在也无视
+        try { execSync(`cmd /c taskkill /PID ${savedPid} /F 2>nul`, { windowsHide: true, timeout: 3000 }); } catch {}
       }
     }
   } catch {}
-  // 方法2: 通过 WMIC 查找所有运行 yeelight_relay.py 的 python 进程
-  try {
-    const out = execSync(
-      `wmic process where "name='python.exe'" get processid,commandline /format:csv`,
-      { encoding: "utf-8", windowsHide: true, timeout: 5000 }
-    );
-    for (const line of out.split(/\r?\n/)) {
-      if (line.includes("yeelight_relay")) {
-        const m = line.match(/,(\d+)\s*$/);
-        if (m) {
-          const pid = parseInt(m[1], 10);
-          if (pid && pid !== process.pid) {
-            try { execSync(`taskkill //PID ${pid} //F`, { windowsHide: true }); } catch {}
-          }
-        }
-      }
-    }
-  } catch {}
-  // 方法3: 杀当前跟踪的进程
+  // 方法2: 杀当前跟踪的进程
   if (relayProcess) {
+    log("  杀跟踪进程 PID:", relayProcess.pid);
     try { relayProcess.kill(); } catch {}
     relayProcess = null;
   }
   // 清理 PID 文件
-  try { if (existsSync(RELAY_PID_FILE)) require("node:fs").unlinkSync(RELAY_PID_FILE); } catch {}
-  // 等待端口释放
-  try { execSync("timeout /t 1 /nobreak >nul", { windowsHide: true }); } catch {}
+  try { if (existsSync(RELAY_PID_FILE)) unlinkSync(RELAY_PID_FILE); } catch {}
 }
 
 function startRelay(bulbIp: string): Promise<number> {
-  killAllRelayProcesses();
-  return new Promise((resolve, reject) => {
-    const cmd = `"${pythonCmd}" "${RELAY_SCRIPT}" ${RELAY_PORT} ${bulbIp}`;
-    relayProcess = exec(cmd, { windowsHide: true }, (err) => {
-      relayProcess = null;
-      try { if (existsSync(RELAY_PID_FILE)) require("node:fs").unlinkSync(RELAY_PID_FILE); } catch {}
-    });
-    // 写入 PID 文件
-    if (relayProcess && relayProcess.pid) {
-      try { writeFileSync(RELAY_PID_FILE, String(relayProcess.pid), "utf-8"); } catch {}
-    }
-    const check = (tries: number) => {
-      if (!relayProcess) { reject(new Error("relay 未启动")); return; }
-      fetch(`http://127.0.0.1:${RELAY_PORT}/api/status`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.ok) {
-            // 验证 relay 能否 import yeelight
-            if (!d.yeelight) {
-              reject(new Error(`relay 的 Python (${pythonCmd}) 未安装 yeelight 包。请在该 Python 中执行: pip install yeelight`));
-              return;
-            }
-            resolve(RELAY_PORT);
-          } else {
-            reject(new Error("relay 未就绪"));
+  log("启动 relay: Python=", pythonCmd, "IP=", bulbIp);
+  // 先检查端口上是否已有可用 relay，有则直接复用
+  return fetch(`http://127.0.0.1:${RELAY_PORT}/api/health`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok && d.yeelight && d.bulb_ip === bulbIp) {
+        log("  复用已有 relay, yeelight=", d.yeelight);
+        return RELAY_PORT;
+      }
+      throw new Error("relay 不可用，需重启");
+    })
+    .catch(() => {
+      // 没有可用 relay，启动新的
+      killAllRelayProcesses();
+      return new Promise((resolve, reject) => {
+        const cmd = `"${pythonCmd}" "${RELAY_SCRIPT}" ${RELAY_PORT} ${bulbIp}`;
+        log("  命令:", cmd);
+        relayProcess = exec(cmd, { windowsHide: true }, (err) => {
+          log("  relay 进程退出, code=", err?.code, "signal=", err?.signal);
+          relayProcess = null;
+          try { if (existsSync(RELAY_PID_FILE)) unlinkSync(RELAY_PID_FILE); } catch {}
+        });
+        if (relayProcess && relayProcess.pid) {
+          try { writeFileSync(RELAY_PID_FILE, String(relayProcess.pid), "utf-8"); } catch {}
+          log("  relay PID:", relayProcess.pid);
+        }
+        const check = (tries: number) => {
+          if (!relayProcess) {
+            log("  relay 进程已退出，启动失败");
+            reject(new Error("relay 未启动"));
+            return;
           }
-        })
-        .catch(() => tries > 0 ? setTimeout(() => check(tries - 1), 200) : reject(new Error("relay 超时")));
-    };
-    check(30);
-  });
+          fetch(`http://127.0.0.1:${RELAY_PORT}/api/status`)
+            .then(r => r.json())
+            .then(d => {
+              if (d.ok) {
+                if (!d.yeelight) {
+                  log("  relay 的 Python 无 yeelight 包");
+                  reject(new Error(`relay 的 Python (${pythonCmd}) 未安装 yeelight 包。请在该 Python 中执行: pip install yeelight`));
+                  return;
+                }
+                log("  relay 就绪: yeelight=", d.yeelight, "bulb=", d.bulb_ready);
+                resolve(RELAY_PORT);
+              } else {
+                log("  relay 未就绪, 重试剩余", tries);
+                if (tries > 0) setTimeout(() => check(tries - 1), 200);
+                else reject(new Error("relay 未就绪"));
+              }
+            })
+            .catch((e) => {
+              if (tries > 0) {
+                setTimeout(() => check(tries - 1), 200);
+              } else {
+                log("  relay 超时:", e.message?.slice(0, 80));
+                reject(new Error("relay 超时"));
+              }
+            });
+        };
+        check(30);
+      });
+    });
 }
 
 function stopRelay(): void {
@@ -428,13 +445,20 @@ export default function (pi: ExtensionAPI): void {
 
   // ─── 会话启动：启动 relay ───
   pi.on("session_start", async () => {
+    log("session_start: 开始初始化...");
     const bulb = getDefaultBulb();
-    if (!bulb) return;  // 没配置灯泡，不做任何操作
+    if (!bulb) {
+      log("session_start: 无默认灯泡，跳过");
+      return;  // 没配置灯泡，不做任何操作
+    }
+    log("session_start: 默认灯泡=", bulb.name, bulb.ip);
     config.bulbIp = bulb.ip;
     warned = false;
     try {
       config.relayPort = await startRelay(bulb.ip);
+      log("session_start: relay 启动成功, 端口=", config.relayPort);
     } catch (e: any) {
+      log("session_start: relay 启动失败:", e.message);
       console.error(`[yeelight] relay 启动失败: ${e.message}`);
     }
   });
