@@ -222,79 +222,44 @@ async function openStateTester(ctx: any, bulbIp: string): Promise<void> {
 
 // ═══════════════ 安装引导 /yeelight-setup ═══════════════
 
-async function runSetup(pi: any, ctx: any): Promise<void> {
+async function runSetup(_pi: any, ctx: any): Promise<void> {
   const cfg = loadBulbs();
 
   while (true) {
-    const items: { label: string; id: string; desc?: string }[] = [];
-
+    // ── 构建菜单选项 ──
+    const menuItems: string[] = [];
     for (const b of cfg.bulbs) {
-      const isDef = cfg.default === b.id;
-      items.push({
-        id: `info_${b.id}`,
-        label: `${isDef ? "★ " : "  "}${b.name}`,
-        desc: `${b.ip}${isDef ? " (默认)" : ""}`,
-      });
+      const prefix = cfg.default === b.id ? "★ " : "  ";
+      menuItems.push(`${prefix}${b.name}  (${b.ip})`);
     }
-    items.push(
-      { id: "__sep__", label: "", desc: "" },
-      { id: "add_manual", label: "➕ 手动添加", desc: "输入 IP 和名称" },
-      { id: "add_scan",   label: "🔍 扫描局域网", desc: "自动发现设备" },
-    );
+    if (cfg.bulbs.length > 0) menuItems.push("──────────────");
+    menuItems.push("➕ 手动添加");
+    menuItems.push("🔍 扫描局域网");
     if (cfg.bulbs.length > 0) {
-      items.push(
-        { id: "edit",    label: "✏️ 编辑默认灯泡", desc: "选择一个设为默认" },
-        { id: "remove",  label: "🗑 删除灯泡", desc: "从列表中移除" },
-      );
+      menuItems.push("✏️ 设置默认");
+      menuItems.push("🗑 删除灯泡");
     }
-    items.push(
-      { id: "__sep2__", label: "", desc: "" },
-      { id: "done",     label: "✅ 完成", desc: "保存并退出" },
-    );
+    menuItems.push("✅ 完成退出");
 
-    const choice = await new Promise<string>((resolve) => {
-      ctx.ui.custom((tui: any, theme: any, _kb: any, done: any) => {
-        let sel = 0; let cW: number | undefined; let cL: string[] | undefined;
-        const comp = {
-          render(w: number): string[] {
-            if (cW === w && cL) return cL; cW = w;
-            const lines: string[] = []; const mw = Math.min(w - 4, 50);
-            lines.push("", `  ${theme.fg("accent", theme.bold("Yeelight 灯泡配置"))}`, `  ${theme.fg("dim", "─".repeat(mw))}`, "");
-            if (cfg.bulbs.length === 0) lines.push(`  ${theme.fg("dim", "  暂无保存的灯泡，请添加")}`, "");
-            for (let i = 0; i < items.length; i++) {
-              const it = items[i];
-              if (it.id === "__sep__" || it.id === "__sep2__") { lines.push(""); continue; }
-              const isSel = i === sel, arr = isSel ? "▸" : " ";
-              const lab = `${arr} ${it.label}`;
-              const desc = it.desc ? ` ${theme.fg("dim", it.desc)}` : "";
-              lines.push(`  ${isSel ? theme.fg("accent", theme.bold(lab)) : lab}${desc}`);
-            }
-            lines.push("", `  ${theme.fg("dim", "─".repeat(mw))}`);
-            lines.push(`  ${theme.fg("dim", "↑↓ 选择  Enter 确认  Esc 退出")}`, "");
-            return cL = lines;
-          },
-          handleInput(d: string): void {
-            if (matchesKey(d, Key.up) && sel > 0) { sel--; cW = undefined; cL = undefined; tui.requestRender(); }
-            else if (matchesKey(d, Key.down) && sel < items.length - 1) { sel++; cW = undefined; cL = undefined; tui.requestRender(); }
-            else if (matchesKey(d, Key.enter)) { done(items[sel].id); }
-            else if (matchesKey(d, Key.escape)) { done("done"); }
-          },
-          invalidate(): void { cW = undefined; cL = undefined; },
-        };
-        return comp;
-      }, { overlay: true });
-    });
+    if (cfg.bulbs.length === 0) {
+      ctx.ui.notify("暂无保存的灯泡，请添加或扫描", "info");
+    }
 
-    if (choice === "done" || !choice) {
+    const choice = await ctx.ui.select("Yeelight 灯泡配置", menuItems);
+    if (!choice) { saveBulbs(cfg); return; }
+
+    // ── 处理选择 ──
+
+    if (choice === "✅ 完成退出") {
       saveBulbs(cfg);
       ctx.ui.notify("灯泡配置已保存", "info");
       return;
     }
 
-    if (choice === "add_manual") {
-      const ip = await ctx.ui.input("灯泡 IP 地址 (例: 192.168.2.205)");
+    if (choice === "➕ 手动添加") {
+      const ip = await ctx.ui.input("灯泡 IP 地址 (例如 192.168.2.205)");
       if (!ip) continue;
-      const name = await ctx.ui.input("灯泡名称 (例: 办公室主灯)");
+      const name = await ctx.ui.input("灯泡名称 (例如 办公室主灯)");
       if (!name) continue;
       const id = `bulb_${Date.now()}`;
       cfg.bulbs.push({ id, name, ip });
@@ -303,32 +268,32 @@ async function runSetup(pi: any, ctx: any): Promise<void> {
       continue;
     }
 
-    if (choice === "add_scan") {
+    if (choice === "🔍 扫描局域网") {
       ctx.ui.setStatus("yeelight", "扫描中...");
       try {
-        let data: any;
-        if (config.relayPort) {
-          const resp = await fetch(`${getRelayUrl()}/api/discover`, { method: "POST", body: "{}" });
-          data = await resp.json();
-        } else {
-          // relay 未启动，用独立扫描脚本
-          const out = await new Promise<string>((resolve, reject) => {
-            const cmd = `"${pythonCmd}" "${DISCOVER_SCRIPT}"`;
-            exec(cmd, { windowsHide: true, timeout: 10000 }, (err, stdout) => {
-              if (err) reject(err); else resolve(stdout);
-            });
-          });
-          data = JSON.parse(out);
+        // 确保 relay 在跑（没有默认灯泡时 relay 不会自动启动）
+        if (!config.relayPort) {
+          ctx.ui.setStatus("yeelight", "启动 relay...");
+          try {
+            // 用一个占位 IP 启动 relay，只用于扫描
+            config.relayPort = await startRelay("127.0.0.1");
+          } catch {
+            ctx.ui.notify("relay 启动失败，请检查 Python 配置", "error");
+            ctx.ui.setStatus("yeelight", "");
+            continue;
+          }
         }
+        const resp = await fetch(`${getRelayUrl()}/api/discover`, { method: "POST", body: "{}" });
+        const data = await resp.json();
         if (!data.ok) { ctx.ui.notify(`扫描失败: ${data.error}`, "error"); continue; }
         if (!data.bulbs || data.bulbs.length === 0) {
-          ctx.ui.notify("未发现灯泡，请检查局域网控制是否开启", "error");
+          ctx.ui.notify("未发现灯泡，请检查局域网控制是否开启", "warning");
           continue;
         }
         const labels = data.bulbs.map((b: any) => `${b.name || b.model || "未知"} — ${b.ip}`);
-        const choice = await ctx.ui.select("选择要添加的灯泡", labels);
-        if (!choice) continue;
-        const idx = labels.indexOf(choice);
+        const picked = await ctx.ui.select(`发现 ${data.count} 个设备`, labels);
+        if (!picked) continue;
+        const idx = labels.indexOf(picked);
         if (idx >= 0) {
           const b = data.bulbs[idx];
           const bName = b.name || b.model || "未命名";
@@ -344,27 +309,28 @@ async function runSetup(pi: any, ctx: any): Promise<void> {
       continue;
     }
 
-    if (choice === "edit" && cfg.bulbs.length > 0) {
-      const defs = cfg.bulbs.map(b => b.id);
-      const choice2 = await ctx.ui.select("选择默认灯泡", defs);
-      if (choice2) {
-        cfg.default = choice2;
-        ctx.ui.notify(`默认灯泡: ${cfg.bulbs.find(b => b.id === choice2)?.name}`, "info");
+    if (choice === "✏️ 设置默认") {
+      const labels = cfg.bulbs.map(b => `${b.name} (${b.ip})`);
+      const picked = await ctx.ui.select("选择默认灯泡", labels);
+      if (!picked) continue;
+      const idx = labels.indexOf(picked);
+      if (idx >= 0) {
+        cfg.default = cfg.bulbs[idx].id;
+        ctx.ui.notify(`默认灯泡: ${cfg.bulbs[idx].name}`, "info");
       }
       continue;
     }
 
-    if (choice === "remove" && cfg.bulbs.length > 0) {
-      const defs = cfg.bulbs.map(b => `${b.name} (${b.ip})`);
-      const choice2 = await ctx.ui.select("选择要删除的灯泡", defs);
-      if (choice2) {
-        const idx = defs.indexOf(choice2);
-        if (idx >= 0) {
-          const removed = cfg.bulbs[idx];
-          cfg.bulbs.splice(idx, 1);
-          if (cfg.default === removed.id) cfg.default = cfg.bulbs[0]?.id;
-          ctx.ui.notify(`已删除: ${removed.name}`, "info");
-        }
+    if (choice === "🗑 删除灯泡") {
+      const labels = cfg.bulbs.map(b => `${b.name} (${b.ip})`);
+      const picked = await ctx.ui.select("选择要删除的灯泡", labels);
+      if (!picked) continue;
+      const idx = labels.indexOf(picked);
+      if (idx >= 0) {
+        const removed = cfg.bulbs[idx];
+        cfg.bulbs.splice(idx, 1);
+        if (cfg.default === removed.id) cfg.default = cfg.bulbs[0]?.id;
+        ctx.ui.notify(`已删除: ${removed.name}`, "info");
       }
       continue;
     }
