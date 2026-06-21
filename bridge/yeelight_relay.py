@@ -35,7 +35,7 @@ DEFAULT_IP = "192.168.2.205"
 _STATES = {
     "idle":      { "rgb": ( 68, 136, 255), "bri": 20, "mode": "solid",   "label": "冰蓝待机" },
     "waiting":   { "rgb": (255, 140,   0), "bri": 50, "mode": "solid",   "label": "等待用户" },
-    "success":   { "rgb": (  0, 220,  80), "bri": 80, "mode": "solid",   "label": "完成成功" },
+    "success":   { "rgb": (255, 240, 230), "bri": 30, "mode": "solid",   "label": "完成成功" },
     "error":     { "rgb": (255,  30,  30), "bri": 50, "mode": "solid",   "label": "出错停止" },
     "thinking":  { "rgb": (  0,  68, 255), "bri": 50, "mode": "breathe", "label": "思考中" },
     "reading":   { "rgb": (  0, 200, 255), "bri": 60, "mode": "breathe", "label": "读取文件" },
