@@ -58,12 +58,12 @@ def tool_to_state(tool_name, tool_input=None):
 # ═══════════════ HTTP 通信 ═══════════════
 
 def _post(path, data):
-    """POST 到 bridge relay"""
+    """POST to bridge relay (fast: 0.3s timeout, localhost)"""
     try:
         body = json.dumps(data).encode()
         req = Request(f"{BRIDGE_URL}{path}", data=body, method="POST")
         req.add_header("Content-Type", "application/json")
-        urlopen(req, timeout=1)
+        urlopen(req, timeout=0.3)
     except Exception:
         pass
 
@@ -72,34 +72,40 @@ def _post(path, data):
 
 def _read_event():
     """
-    从 stdin 读取 Claude Code 传入的 JSON 事件。
-
-    用独立线程 + 2 秒超时。使用 readline() 而非 read()：
-    read() 会阻塞直到管道 EOF，但 hook 管道不会关闭 → 永远超时 fallback。
-    readline() 在收到换行符时立即返回。
+    Read Claude Code hook event JSON from stdin.
+    
+    Uses buffer.readline() (bytes mode, faster on Windows) + 0.5s timeout.
+    Claude Code sends single-line JSON with newline → readline returns instantly.
     """
     result = [None]
 
     def _do_read():
         try:
-            raw = sys.stdin.readline()
+            raw = sys.stdin.buffer.readline().decode("utf-8")
             if raw and raw.strip():
                 result[0] = json.loads(raw)
-        except json.JSONDecodeError:
-            try:
-                rest = sys.stdin.read()
-                full = raw + rest
-                if full and full.strip():
-                    result[0] = json.loads(full)
-            except Exception:
-                pass
         except Exception:
             pass
 
     t = threading.Thread(target=_do_read, daemon=True)
     t.start()
-    t.join(2)
+    t.join(0.5)
     return result[0]
+
+
+def _read_event_blocking():
+    """
+    Read event with blocking readline (no timeout).
+    For events that ALWAYS have stdin data (PreToolUse, PostToolUse).
+    Faster because no thread overhead, but blocks until data arrives.
+    """
+    try:
+        raw = sys.stdin.buffer.readline().decode("utf-8")
+        if raw and raw.strip():
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
 
 
 # ═══════════════ Hook 事件处理 ═══════════════
@@ -110,8 +116,8 @@ def handle_user_prompt():
 
 
 def handle_pre_tool():
-    """PreToolUse: 工具即将执行"""
-    event = _read_event()
+    """PreToolUse: tool about to execute. Use blocking read — data is always on stdin."""
+    event = _read_event_blocking()
     if event is None:
         _post("/api/state", {"state": "thinking", "pid": "claude-hook"})
         return
@@ -133,8 +139,8 @@ def handle_pre_tool():
 
 
 def handle_post_tool():
-    """PostToolUse: 工具执行完毕"""
-    event = _read_event()
+    """PostToolUse: tool finished. Use blocking read."""
+    event = _read_event_blocking()
     if event is None:
         _post("/api/state", {"state": "thinking", "pid": "claude-hook"})
         return
