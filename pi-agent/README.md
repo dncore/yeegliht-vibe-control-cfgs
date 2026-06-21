@@ -1,5 +1,7 @@
 # Yeelight Vibe Control — Pi Agent 插件
 
+> [项目主页 / Project Home](../README.md)
+
 让 Yeelight 智能灯实时显示 pi agent 的运行状态。基于交通信号灯 + HCI 色彩理论设计。
 
 ## 环境准备
