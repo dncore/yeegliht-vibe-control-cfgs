@@ -75,7 +75,7 @@ def find_python():
 
 PYTHON_CMD = find_python()
 
-def relay_request(path, data=None, timeout=3):
+def relay_request(path, data=None, timeout=5):
     """向 relay 发送 HTTP 请求"""
     url = f"{RELAY_URL}{path}"
     try:
@@ -293,7 +293,7 @@ def cmd_discover():
             print(f"  ❌ 未找到发现脚本: {discover_script}")
         return
 
-    result = relay_request("/api/discover", {})
+    result = relay_request("/api/discover", {}, timeout=15)
     if not result.get("ok"):
         print(f"  ❌ 发现失败: {result.get('error', '未知错误')}")
         return
@@ -353,7 +353,7 @@ def cmd_setup_bulbs():
                     subprocess.run([PYTHON_CMD, str(discover_script)])
                 continue
 
-            result = relay_request("/api/discover", {})
+            result = relay_request("/api/discover", {}, timeout=15)
             if not result.get("ok") or not result.get("bulbs"):
                 print("  ⚠ 未发现任何设备")
                 continue

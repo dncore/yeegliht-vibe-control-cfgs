@@ -298,6 +298,22 @@ class RelayHandler(BaseHTTPRequestHandler):
                 "bulb_connected": _persistent_bulb is not None,
                 "bulb_ip": RelayHandler.bulb_ip
             })
+
+        elif path == "/api/bulb-info":
+            """查询灯泡型号/名称（复用持久连接）"""
+            try:
+                bulb = _get_bulb(self.bulb_ip, reconnect=True)
+                props = bulb.get_properties()
+                self._send_json({
+                    "ok": True,
+                    "model": props.get("model", "unknown"),
+                    "name": props.get("name", ""),
+                    "fw_ver": props.get("fw_ver", ""),
+                    "power": props.get("power", ""),
+                    "bright": props.get("bright", ""),
+                })
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)})
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -374,24 +390,13 @@ class RelayHandler(BaseHTTPRequestHandler):
                     from concurrent.futures import ThreadPoolExecutor, as_completed
 
                     def probe(ip):
-                        """扫描端口 + 尝试查询型号"""
+                        """快速端口扫描（不查询型号，避免与 relay 持久连接冲突）"""
                         try:
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             s.settimeout(0.2)
                             s.connect((ip, 55443))
                             s.close()
-                            # 端口开放，尝试查询型号（会慢一点，但设备数量少可接受）
-                            name = f"Yeelight-{ip}"
-                            model = "unknown"
-                            try:
-                                b = Bulb(ip, auto_on=False, effect="sudden")
-                                props = b.get_properties()
-                                if props:
-                                    model = props.get("model", "unknown")
-                                    name = props.get("name", name)
-                            except Exception:
-                                pass
-                            return {"ip": ip, "port": 55443, "name": name, "model": model}
+                            return {"ip": ip, "port": 55443, "name": f"Yeelight-{ip}", "model": "unknown"}
                         except Exception:
                             return None
 
@@ -417,6 +422,18 @@ class RelayHandler(BaseHTTPRequestHandler):
                             r = future.result()
                             if r:
                                 result.append(r)
+
+                # 3. 用 relay 已有的持久连接查询型号（避免冲突）
+                for entry in result:
+                    if entry.get("model") == "unknown" and entry.get("ip") == self.bulb_ip:
+                        try:
+                            bulb = _get_bulb(self.bulb_ip)
+                            props = bulb.get_properties()
+                            if props:
+                                entry["model"] = props.get("model", "unknown")
+                                entry["name"] = props.get("name", entry.get("name", ""))
+                        except Exception:
+                            pass
 
                 self._send_json({"ok": True, "bulbs": result, "count": len(result)})
             except Exception as e:
