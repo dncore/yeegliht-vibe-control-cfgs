@@ -297,11 +297,11 @@ def handle_pre_tool():
          这是唯一真正需要用户交互的阻塞点。
          
       2. 工具类型映射 → 具体状态
-         Bash         → "executing" (⚙️ 橙呼吸)
-         Bash(网络)   → "fetching"   (🌐 蓝闪烁)
-         Read/Grep等  → "reading"   (📖 青呼吸)
-         Write/Edit   → "writing"   (✏️ 玫红呼吸)
-         WebSearch等  → "fetching"   (🌐 蓝闪烁)
+         Bash         → "executing" (🟧 橙呼吸)
+         Bash(网络)   → "fetching"   (🟦 蓝闪烁)
+         Read/Grep等  → "reading"   (🟦 青呼吸)
+         Write/Edit   → "writing"   (🟪 玫红呼吸)
+         WebSearch等  → "fetching"   (🟦 蓝闪烁)
          
       3. 未知工具      → "thinking"  (🧠 蓝呼吸)
     """

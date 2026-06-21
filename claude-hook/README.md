@@ -52,12 +52,12 @@ Claude Code hooks → hooks.py → HTTP → relay 守护进程(9877) → 持久 
 ```
 
 每次 Claude Code 会话中触发 hook 时，`hooks.py` 自动管理 relay 生命周期：
-- `UserPromptSubmit` → 标记 Claude 开始工作 (🧠 thinking)
-- `PreToolUse` → 工具类型映射灯光 / 权限等待 (🟡 waiting)
-- `PostToolUse` → 成功继续工作 / 检测错误 (🔴 error)
+- `UserPromptSubmit` → 标记 Claude 开始工作 (🟦 thinking)
+- `PreToolUse` → 工具类型映射灯光 / 权限等待 (🟧 waiting)
+- `PostToolUse` → 成功继续工作 / 检测错误 (🟥 error)
 - `SubagentStop` → 子任务结束，恢复工作状态
 - `Notification` → 保持 relay 活跃，不改变状态
-- `Stop` → 会话结束，恢复空闲待命 (💤 idle)
+- `Stop` → 会话结束，恢复空闲待命 (🟦 idle)
 
 relay 守护进程保持**单一 TCP 连接**到灯泡，所有状态变化通过 HTTP 瞬时完成。
 
@@ -136,19 +136,19 @@ python hooks.py direct stop       # 终止灯效
 
 | Claude Code 事件 | 条件 | 灯光状态 | 含义 |
 |-----------------|------|---------|------|
-| `UserPromptSubmit` | — | 🧠 蓝 呼吸 (thinking) | Claude 开始工作，用户等待 |
-| `PreToolUse` | 需授权 (Do you want to proceed?) | 🟡 琥珀 常亮 (waiting) | Claude 等待用户确认 |
-| `PreToolUse` | Bash 命令执行 | ⚙️ 橙 呼吸 (executing) | 正在执行命令 |
-| `PreToolUse` | Bash (curl/wget/npm/pip) | 🌐 蓝 闪烁 (fetching) | 下载/安装/网络请求 |
-| `PreToolUse` | Read / Grep / Glob | 📖 青 呼吸 (reading) | 正在读取文件 |
-| `PreToolUse` | Write / Edit | ✏️ 玫红 呼吸 (writing) | 正在写入/编辑文件 |
-| `PreToolUse` | WebSearch / WebFetch | 🌐 蓝 闪烁 (fetching) | 正在访问网络 |
-| `PreToolUse` | 其他工具 | 🧠 蓝 呼吸 (thinking) | 通用工作状态 |
-| `PostToolUse` | 正常返回 | 🧠 蓝 呼吸 (thinking) | 继续下一个任务 |
-| `PostToolUse` | 出错 | 🔴 正红 常亮 (error) | 工具执行失败 |
-| `SubagentStop` | — | 🧠 蓝 呼吸 (thinking) | 子任务完成，继续 |
+| `UserPromptSubmit` | — | 🟦 蓝 呼吸 (thinking) | Claude 开始工作，用户等待 |
+| `PreToolUse` | 需授权 (Do you want to proceed?) | 🟧 琥珀 常亮 (waiting) | Claude 等待用户确认 |
+| `PreToolUse` | Bash 命令执行 | 🟧 橙 呼吸 (executing) | 正在执行命令 |
+| `PreToolUse` | Bash (curl/wget/npm/pip) | 🟦 蓝 闪烁 (fetching) | 下载/安装/网络请求 |
+| `PreToolUse` | Read / Grep / Glob | 🟦 青 呼吸 (reading) | 正在读取文件 |
+| `PreToolUse` | Write / Edit | 🟪 玫红 呼吸 (writing) | 正在写入/编辑文件 |
+| `PreToolUse` | WebSearch / WebFetch | 🟦 蓝 闪烁 (fetching) | 正在访问网络 |
+| `PreToolUse` | 其他工具 | 🟦 蓝 呼吸 (thinking) | 通用工作状态 |
+| `PostToolUse` | 正常返回 | 🟦 蓝 呼吸 (thinking) | 继续下一个任务 |
+| `PostToolUse` | 出错 | 🟥 正红 常亮 (error) | 工具执行失败 |
+| `SubagentStop` | — | 🟦 蓝 呼吸 (thinking) | 子任务完成，继续 |
 | `Notification` | — | (保持当前状态) | 系统通知，不改变灯光 |
-| `Stop` | — | 💤 冰蓝 常亮 (idle) | 会话结束，待命 |
+| `Stop` | — | 🟦 冰蓝 常亮 (idle) | 会话结束，待命 |
 
 > **设计原则**: "thinking" = Claude 在工作（你等着），"waiting" = Claude 在等你操作（快响应）。
 
@@ -156,16 +156,16 @@ python hooks.py direct stop       # 终止灯效
 
 | 状态 | 效果 | 颜色 | 含义 |
 |------|------|------|------|
-| idle | 常亮 | 💤 冰蓝 (68,136,255) | 空闲待命 |
-| thinking | 呼吸 | 🧠 蓝 (0,68,255) | 思考中 |
-| executing | 呼吸 | ⚙️ 橙 (220,90,0) | 执行命令 |
-| reading | 呼吸 | 📖 青 (0,200,255) | 读取文件 |
-| writing | 呼吸 | ✏️ 玫红 (255,50,120) | 写入/编辑 |
-| querying | 呼吸 | 🔍 绿 (0,160,100) | 查询上下文 |
-| fetching | 闪烁 | 🌐 蓝 (0,100,255) | 访问网络 |
-| waiting | 常亮 | 🟡 琥珀 (255,140,0) | 等待用户 |
-| success | 常亮 | ✅ 翠绿 (0,220,80) | 完成成功 |
-| error | 常亮 | 🔴 正红 (255,30,30) | 出错停止 |
+| idle | 常亮 | 🟦 冰蓝 (68,136,255) | 空闲待命 |
+| thinking | 呼吸 | 🟦 蓝 (0,68,255) | 思考中 |
+| executing | 呼吸 | 🟧 橙 (220,90,0) | 执行命令 |
+| reading | 呼吸 | 🟦 青 (0,200,255) | 读取文件 |
+| writing | 呼吸 | 🟪 玫红 (255,50,120) | 写入/编辑 |
+| querying | 呼吸 | 🟩 绿 (0,160,100) | 查询上下文 |
+| fetching | 闪烁 | 🟦 蓝 (0,100,255) | 访问网络 |
+| waiting | 常亮 | 🟧 琥珀 (255,140,0) | 等待用户 |
+| success | 常亮 | 🟩 翠绿 (0,220,80) | 完成成功 |
+| error | 常亮 | 🟥 正红 (255,30,30) | 出错停止 |
 
 ## 文件结构
 
