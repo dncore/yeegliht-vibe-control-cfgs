@@ -374,12 +374,24 @@ class RelayHandler(BaseHTTPRequestHandler):
                     from concurrent.futures import ThreadPoolExecutor, as_completed
 
                     def probe(ip):
+                        """扫描端口 + 尝试查询型号"""
                         try:
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             s.settimeout(0.2)
                             s.connect((ip, 55443))
                             s.close()
-                            return {"ip": ip, "port": 55443, "name": f"Yeelight-{ip}"}
+                            # 端口开放，尝试查询型号（会慢一点，但设备数量少可接受）
+                            name = f"Yeelight-{ip}"
+                            model = "unknown"
+                            try:
+                                b = Bulb(ip, auto_on=False, effect="sudden")
+                                props = b.get_properties()
+                                if props:
+                                    model = props.get("model", "unknown")
+                                    name = props.get("name", name)
+                            except Exception:
+                                pass
+                            return {"ip": ip, "port": 55443, "name": name, "model": model}
                         except Exception:
                             return None
 
