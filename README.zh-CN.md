@@ -5,142 +5,165 @@
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License">
 </p>
 
-<p align="center">
-  <a href="./README.md">English</a>
-</p>
-
-<h1 align="center">Yeelight Vibe Control</h1>
-<h3 align="center">让智能灯实时显示 AI 编程助手的工作状态</h3>
+<h1 align="center">Yeelight Vibe Bridge</h1>
+<h3 align="center">AI 智能体实时状态灯光 — Yeelight 智能灯泡</h3>
 
 ---
 
 ## 这是什么？
 
-**Yeelight Vibe Control** 让你的 Yeelight 智能灯泡实时反映 AI 编程助手（Claude Code / Pi Agent）的运行状态。基于交通信号灯 + HCI 人机交互色彩理论设计，通过灯光**一眼看出** AI 正在做什么——在思考？在读文件？在等你确认？还是出错了？
+**Yeelight Vibe Bridge** 让你的 Yeelight 智能灯泡变成 AI 编程助手的实时状态指示灯。基于交通信号灯色彩理论和人机交互 (HCI) 原则设计，一眼就知道 AI 在做什么 — 思考、读文件、等你输入、还是出错了。
 
 ```
-🟦 蓝呼吸   → 思考中
-🟧 橙呼吸   → 执行命令
-🟦 青呼吸   → 读取文件
+🟦 蓝色呼吸 → 思考中
+🟧 橙色呼吸 → 执行命令
+🟦 青色呼吸 → 读取文件
 🟪 玫红呼吸 → 写入/编辑
-🟦 蓝闪烁   → 访问网络
-🟩 绿呼吸   → 查询上下文
-🟧 琥珀常亮 → 等待用户确认
+🟦 蓝色闪烁 → 访问网络
+🟩 绿色呼吸 → 查询上下文
+🟧 琥珀常亮 → 等待你确认
 🟥 正红常亮 → 出错了
 🟩 翠绿常亮 → 任务完成
 ```
 
-## 支持平台
-
-| 平台 | 集成方式 | 目录 |
-|------|---------|------|
-| **Claude Code** | 官方 [Hooks 系统](https://code.claude.com/docs/en/hooks) (6 种事件) | [`claude-hook/`](./claude-hook/) |
-| **Pi Agent** | TypeScript 扩展 API (10+ 种事件) | [`pi-agent/`](./pi-agent/) |
-
-> 💡 两个版本**共享同一套 relay 守护进程**。灯光颜色映射**完全对齐**——相同语义 = 相同灯光，切换 agent 不困惑。
-
 ## 架构
 
 ```
-Claude Code hooks ──→ hooks.py ─┐
-                                 ├──→ HTTP ──→ relay (:9877) ──→ TCP ──→ 💡 灯泡
-Pi Agent 事件    ──→ index.ts ──┘
+                      ┌─────────────────────────────────┐
+                      │  ~/.yeelight-vibe-bridge/        │  ← 公共桥接层
+                      │  ├── yeelight_relay.py           │     (独立安装)
+                      │  ├── yeelight_bridge.py          │
+                      │  ├── yeelight_discover.py        │
+                      │  └── bulbs.json                  │
+                      └──────────┬──────────────────────┘
+                                 │ HTTP (:9877)
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              ┌──────────┐ ┌──────────┐ ┌──────────┐
+              │ Claude   │ │ Pi Agent │ │  未来    │  ← 可选适配器
+              │ Code     │ │          │ │  智能体  │     (各自安装)
+              └──────────┘ └──────────┘ └──────────┘
 ```
 
-- **relay 守护进程**: 保持**单一持久 TCP 连接**到灯泡，所有状态变化通过 HTTP 瞬时完成
-- **hooks.py / index.ts**: 将各自 agent 的事件映射为灯光状态，发 HTTP 到 relay
-- **颜色对齐**: 两个 agent 的相同语义事件映射到相同灯光效果
+### 设计原则
 
-## 前提条件
+| 层 | 职责 | 位置 |
+|----|------|------|
+| **Bridge** (公共核心) | Relay 守护进程、灯泡发现、多 session 协调、HTTP API | `~/.yeelight-vibe-bridge/` |
+| **Adapters** (智能体适配器) | 极薄的事件翻译：agent 事件 → HTTP → bridge | 各 agent 配置目录 |
+
+### 关键特性
+
+- **单一 relay 守护进程**：与灯泡保持一条持久 TCP 连接，所有 agent 共享
+- **多 session / 跨 agent 协调**：relay 的 `/api/state` 使用优先级聚合（`yeelight-shared.json`），过期 session 30 秒自动淘汰
+- **解耦设计**：bridge 核心安装一次；适配器可选、轻量、可扩展 — 随时添加新智能体
+- **颜色对齐**：所有 agent 相同语义事件 → 相同灯光效果
+
+## 支持的适配器
+
+| 适配器 | 集成方式 | 目录 |
+|--------|---------|------|
+| **Claude Code** | 官方 [Hooks 系统](https://code.claude.com/docs/en/hooks)（6 种事件） | [`adapters/claude-code/`](./adapters/claude-code/) |
+| **Pi Agent** | TypeScript 扩展 API（10+ 事件） | [`adapters/pi-agent/`](./adapters/pi-agent/) |
+
+## 环境要求
 
 | 要求 | 说明 |
 |------|------|
 | Python 3.8+ | `pip install yeelight` |
-| Yeelight 灯泡 | 在 Yeelight App 中开启「局域网控制」 |
-| 同一局域网 | 电脑和灯泡在同一网络 |
-| Claude Code 或 Pi Agent | 对应 agent 已安装 |
+| Yeelight 灯泡 | 在 Yeelight App 中开启**局域网控制** |
+| 同一网络 | 电脑和灯泡在同一局域网 |
 
 ## 快速开始
 
-### Claude Code
+### 1. 安装 Bridge（必须 — 一次性，所有 agent 共用）
 
 ```bash
-cd claude-hook
+cd bridge
 pip install yeelight
 python setup.py
-# 向导自动完成: 发现灯泡 → 保存配置 → 写入 ~/.claude/settings.json hooks
-# 重启 Claude Code 生效
+# 交互式向导: 发现灯泡 → 保存配置 → 安装到 ~/.yeelight-vibe-bridge/
 ```
 
-### Pi Agent
+### 2. 安装智能体适配器（可选 — 根据需要选择）
 
+**Claude Code:**
 ```bash
-cp -r pi-agent ~/.pi/agent/extensions/yeelight-vibe
-# 启动 pi，运行 /yeelight-setup 配置灯泡
-# 运行 /yeelight-test 测试灯光效果
+cd adapters/claude-code
+python setup.py
+# 写入 hooks 配置到 ~/.claude/settings.json → 重启 Claude Code
 ```
 
-## 状态颜色参考
+**Pi Agent:**
+```bash
+cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
+# 启动 pi，灯泡配置由 bridge 统一管理
+```
 
-两种 agent 的**相同语义事件映射到相同灯光效果**。
+## 灯光状态参考
 
-| 语义 | Pi Agent 事件 | Claude Code 事件 | 灯光效果 | RGB |
-|------|--------------|-----------------|---------|-----|
-| 开始工作 | `agent_start` | `UserPromptSubmit` | 🟦 蓝呼吸 | (0,68,255) |
-| 等用户操作 | `user_bash` | `PreToolUse(permission:ask)` | 🟧 琥珀常亮 | (255,140,0) |
-| 读文件 | `tool_call(read)` | `PreToolUse(Read)` | 🟦 青呼吸 | (0,200,255) |
-| 写文件 | `tool_call(write)` | `PreToolUse(Write)` | 🟪 玫红呼吸 | (255,50,120) |
-| 执行命令 | `tool_call(bash)` | `PreToolUse(Bash)` | 🟧 橙呼吸 | (220,90,0) |
-| 访问网络 | `tool_call(web)` | `PreToolUse(WebFetch)` | 🟦 蓝闪烁 | (0,100,255) |
-| 查询上下文 | `context` | — | 🟩 绿呼吸 | (0,160,100) |
-| 工具成功 | `tool_result(ok)` | `PostToolUse(ok)` | 🟦 蓝呼吸 | (0,68,255) |
-| 工具出错 | `tool_result(err)` | `PostToolUse(err)` | 🟥 正红常亮 | (255,30,30) |
-| 任务完成 | `agent_end` | `Stop` | 🟩 翠绿常亮 | (0,220,80) |
+所有 agent 相同语义事件 → 相同灯光效果。
+
+| 语义 | 灯光效果 | RGB |
+|------|---------|-----|
+| 工作/思考中 | 🟦 蓝色呼吸 | (0,68,255) |
+| 等待你确认 | 🟧 琥珀常亮 | (255,140,0) |
+| 读取文件 | 🟦 青色呼吸 | (0,200,255) |
+| 写入文件 | 🟪 玫红呼吸 | (255,50,120) |
+| 执行命令 | 🟧 橙色呼吸 | (220,90,0) |
+| 访问网络 | 🟦 蓝色闪烁 | (0,100,255) |
+| 查询上下文 | 🟩 绿色呼吸 | (0,160,100) |
+| 出错 | 🟥 正红常亮 | (255,30,30) |
+| 任务完成 | 🟩 翠绿常亮 | (0,220,80) |
 
 ## 项目结构
 
 ```
-yeelight-vibe-control-cfgs/
+yeelight-vibe-bridge/
 ├── .gitignore
-├── README.md                     ← 英文版
-├── README.zh-CN.md               ← 你在这里
+├── README.md
+├── README.zh-CN.md
 │
-├── claude-hook/                  ← Claude Code 版
-│   ├── hooks.py                  # Hook 事件处理 (全部 6 种事件)
-│   ├── yeelight_relay.py         # HTTP relay 守护进程 (持久 TCP)
-│   ├── yeelight_discover.py      # 局域网设备发现
-│   ├── setup.py                  # 一键安装向导 (扫描/验证/写入 hooks)
-│   ├── settings.json             # Hook 配置模板
-│   ├── bulbs.json                # 灯泡配置 (自动生成)
-│   └── README.md
+├── bridge/                         ← 公共桥接层（必须先安装）
+│   ├── yeelight_relay.py           # HTTP relay 守护进程
+│   ├── yeelight_discover.py        # 局域网设备发现
+│   ├── yeelight_bridge.py          # bridge 管理 CLI
+│   ├── setup.py                    # bridge 一键安装向导
+│   └── bulbs.json                  # 灯泡配置模板
 │
-└── pi-agent/                     ← Pi Agent 版
-    ├── index.ts                  # Pi 扩展入口 (TypeScript)
-    ├── yeelight_relay.py         # HTTP relay 守护进程 (与 claude-hook 共享)
-    ├── yeelight_discover.py      # 局域网设备发现 (与 claude-hook 共享)
-    ├── yeelight_ctl.py           # CLI 控制脚本
-    ├── bulbs.json                # 灯泡配置 (自动生成)
-    └── README.md
+└── adapters/                       ← 智能体适配器（可选、可扩展）
+    ├── claude-code/
+    │   ├── hooks.py                # Claude Code hook → HTTP (极薄)
+    │   ├── settings.json           # hook 配置模板
+    │   ├── setup.py                # Claude Code 适配器安装
+    │   └── README.md
+    │
+    └── pi-agent/
+        ├── index.ts                # Pi Agent 扩展 → HTTP (极薄)
+        └── README.md
 ```
 
-## 设计笔记
+## 设计说明
 
-- **颜色体系**: 交通信号灯 + HCI 色彩理论。红色 = 停止/错误，绿色 = 通过/完成，蓝色 = 信息/思考，橙色 = 警告/等待
-- **持久连接**: relay 守护进程保持单一 TCP 连接到灯泡，避免频繁握手和连接数竞争
-- **多实例安全**: relay 内置优先级协调机制，多个 agent 会话同时运行时不会冲突
-- **超时保护**: stdin 读取带 2 秒超时，防止 Claude Code TUI 卡死
+- **色彩系统**：交通信号灯 + HCI 色彩理论。红 = 停止/错误，绿 = 完成/通过，蓝 = 信息/思考，橙 = 注意/等待
+- **持久连接**：relay 守护进程与灯泡保持单一 TCP 连接，避免频繁握手和连接竞争
+- **多实例安全**：relay 内置优先级协调。多个 session/agent 不冲突 — 高优先级状态胜出（error > executing > writing > reading > thinking > waiting > idle）
+- **生命周期**：relay 守护进程跨 session 存活，无 session 独占。过期条目 30 秒自动淘汰
+- **可扩展**：添加新智能体只需写一个 ~100 行的薄适配器，映射事件到 HTTP 调用
 
-## 故障排查
+## 故障排除
 
-| 问题 | 解决 |
-|------|------|
-| 扫描不到灯泡 | 检查「局域网控制」是否在 Yeelight App 中开启 |
-| 灯不响应 | 确认 IP 正确；尝试给灯泡断电重启 |
+| 问题 | 解决方案 |
+|------|---------|
+| 无法发现灯泡 | 检查 Yeelight App 中是否开启局域网控制 |
+| 灯泡不响应 | 确认 IP 正确；重启灯泡 |
 | `ModuleNotFoundError: yeelight` | `pip install yeelight` |
-| hooks 不触发 | 检查 settings.json 路径；重启 Claude Code |
-| relay 启动失败 | 确认 Python 3.8+ 且 yeelight 包已安装 |
-| Claude Code TUI 卡死 | 使用最新版 hooks.py（含 stdin 超时保护） |
+| Hooks 不触发 | 检查 `~/.claude/settings.json`；重启 Claude Code |
+| Bridge relay 未运行 | `python ~/.yeelight-vibe-bridge/yeelight_bridge.py start` |
+| Pi Agent 连不上 bridge | 先安装 bridge: `python bridge/setup.py` |
+| Claude Code TUI 冻结 | hooks 使用 readline() + 超时，不会冻结 |
+| 多个 agent 抢灯 | 所有 session 走同一 relay 端口 9877；优先级聚合处理 |
 
-## License
+## 许可证
 
 MIT

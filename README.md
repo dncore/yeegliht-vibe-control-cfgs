@@ -9,14 +9,14 @@
   <a href="./README.zh-CN.md">中文</a>
 </p>
 
-<h1 align="center">Yeelight Vibe Control</h1>
+<h1 align="center">Yeelight Vibe Bridge</h1>
 <h3 align="center">Real-time AI agent status lighting for Yeelight smart bulbs</h3>
 
 ---
 
 ## What is this?
 
-**Yeelight Vibe Control** turns your Yeelight smart bulb into a real-time status indicator for AI coding agents (Claude Code / Pi Agent). Designed around traffic-light color theory and HCI principles, the bulb lets you know **at a glance** what the AI is doing — thinking, reading files, waiting for your input, or hitting an error.
+**Yeelight Vibe Bridge** turns your Yeelight smart bulb into a real-time status indicator for AI coding agents. Designed around traffic-light color theory and HCI principles, the bulb lets you know **at a glance** what the AI is doing — thinking, reading files, waiting for your input, or hitting an error.
 
 ```
 🟦 blue breathe   → thinking
@@ -30,26 +30,45 @@
 🟩 green solid   → task done
 ```
 
-## Supported Platforms
-
-| Platform | Integration | Directory |
-|----------|------------|-----------|
-| **Claude Code** | Official [Hooks system](https://code.claude.com/docs/en/hooks) (6 events) | [`claude-hook/`](./claude-hook/) |
-| **Pi Agent** | TypeScript Extension API (10+ events) | [`pi-agent/`](./pi-agent/) |
-
-> 💡 Both versions share the **same relay daemon**. Color mappings are **fully aligned** — same semantic → same light effect, no confusion when switching agents.
-
 ## Architecture
 
 ```
-Claude Code hooks ──→ hooks.py ─┐
-                                 ├──→ HTTP ──→ relay (:9877) ──→ TCP ──→ 💡 Bulb
-Pi Agent events  ──→ index.ts ──┘
+                      ┌─────────────────────────────────┐
+                      │  ~/.yeelight-vibe-bridge/        │  ← 公共桥接层
+                      │  ├── yeelight_relay.py           │     (独立安装)
+                      │  ├── yeelight_bridge.py          │
+                      │  ├── yeelight_discover.py        │
+                      │  └── bulbs.json                  │
+                      └──────────┬──────────────────────┘
+                                 │ HTTP (:9877)
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              ┌──────────┐ ┌──────────┐ ┌──────────┐
+              │ Claude   │ │ Pi Agent │ │  (future │  ← 可选适配器
+              │ Code     │ │          │ │  agents) │     (各自安装)
+              └──────────┘ └──────────┘ └──────────┘
 ```
 
-- **Relay daemon**: maintains a **single persistent TCP connection** to the bulb; all state changes via HTTP are instant
-- **hooks.py / index.ts**: translate each agent's events into light states, send HTTP to relay
-- **Aligned colors**: same semantic events across both agents map to the same light effect
+### Design Principles
+
+| Layer | Role | Location |
+|-------|------|----------|
+| **Bridge** (公共核心) | Relay 守护进程、灯泡发现、多 session 协调、HTTP API | `~/.yeelight-vibe-bridge/` |
+| **Adapters** (智能体适配器) | 极薄的事件翻译层：agent 事件 → HTTP → bridge | 各 agent 配置目录 |
+
+### Key Features
+
+- **Single relay daemon**: one persistent TCP connection to bulb, shared by all agents
+- **Multi-session & cross-agent coordination**: relay's `/api/state` uses priority aggregation (`yeelight-shared.json`). Stale sessions auto-expire after 30s.
+- **Decoupled**: bridge core installed once. Adapters are optional, lightweight, and extensible — ready for future agents.
+- **Aligned colors**: same semantic events across all agents map to the same light effect
+
+## Supported Adapters
+
+| Adapter | Integration | Directory |
+|---------|------------|-----------|
+| **Claude Code** | Official [Hooks system](https://code.claude.com/docs/en/hooks) (6 events) | [`adapters/claude-code/`](./adapters/claude-code/) |
+| **Pi Agent** | TypeScript Extension API (10+ events) | [`adapters/pi-agent/`](./adapters/pi-agent/) |
 
 ## Requirements
 
@@ -58,77 +77,83 @@ Pi Agent events  ──→ index.ts ──┘
 | Python 3.8+ | `pip install yeelight` |
 | Yeelight bulb | Enable **LAN Control** in the Yeelight App |
 | Same network | Computer and bulb on the same LAN |
-| Claude Code or Pi Agent | Respective agent installed |
 
 ## Quick Start
 
-### Claude Code
+### 1. Install Bridge (required — once for all agents)
 
 ```bash
-cd claude-hook
+cd bridge
 pip install yeelight
 python setup.py
-# The wizard auto: discovers bulbs → saves config → writes hooks to ~/.claude/settings.json
-# Restart Claude Code to apply
+# Interactive wizard: discovers bulbs → saves config → installs to ~/.yeelight-vibe-bridge/
 ```
 
-### Pi Agent
+### 2. Install Agent Adapter (optional — pick your agent)
 
+**Claude Code:**
 ```bash
-cp -r pi-agent ~/.pi/agent/extensions/yeelight-vibe
-# Start pi, run /yeelight-setup to configure bulbs
-# Run /yeelight-test to preview light effects
+cd adapters/claude-code
+python setup.py
+# Writes hooks config to ~/.claude/settings.json → restart Claude Code
+```
+
+**Pi Agent:**
+```bash
+cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
+# Start pi, all bulbs/config managed by bridge
 ```
 
 ## State Color Reference
 
-Both agents map **same semantic events to same light effects**.
+All agents map **same semantic events to same light effects**.
 
-| Semantic | Pi Agent Event | Claude Code Event | Light Effect | RGB |
-|----------|---------------|-------------------|-------------|-----|
-| Working | `agent_start` | `UserPromptSubmit` | 🟦 blue breathe | (0,68,255) |
-| Waiting for you | `user_bash` | `PreToolUse(permission:ask)` | 🟧 amber solid | (255,140,0) |
-| Reading files | `tool_call(read)` | `PreToolUse(Read)` | 🟦 cyan breathe | (0,200,255) |
-| Writing files | `tool_call(write)` | `PreToolUse(Write)` | 🟪 magenta breathe | (255,50,120) |
-| Running commands | `tool_call(bash)` | `PreToolUse(Bash)` | 🟧 orange breathe | (220,90,0) |
-| Fetching web | `tool_call(web)` | `PreToolUse(WebFetch)` | 🟦 blue flash | (0,100,255) |
-| Querying context | `context` | — | 🟩 green breathe | (0,160,100) |
-| Tool OK | `tool_result(ok)` | `PostToolUse(ok)` | 🟦 blue breathe | (0,68,255) |
-| Tool error | `tool_result(err)` | `PostToolUse(err)` | 🟥 red solid | (255,30,30) |
-| Task done | `agent_end` | `Stop` | 🟩 green solid | (0,220,80) |
+| Semantic | Light Effect | RGB |
+|----------|-------------|-----|
+| Working / Thinking | 🟦 blue breathe | (0,68,255) |
+| Waiting for you | 🟧 amber solid | (255,140,0) |
+| Reading files | 🟦 cyan breathe | (0,200,255) |
+| Writing files | 🟪 magenta breathe | (255,50,120) |
+| Running commands | 🟧 orange breathe | (220,90,0) |
+| Fetching web | 🟦 blue flash | (0,100,255) |
+| Querying context | 🟩 green breathe | (0,160,100) |
+| Error | 🟥 red solid | (255,30,30) |
+| Task done | 🟩 green solid | (0,220,80) |
 
 ## Project Structure
 
 ```
-yeelight-vibe-control-cfgs/
+yeelight-vibe-bridge/
 ├── .gitignore
-├── README.md                     ← you are here
-├── README.zh-CN.md               ← 中文版
+├── README.md
+├── README.zh-CN.md
 │
-├── claude-hook/                  ← Claude Code version
-│   ├── hooks.py                  # Hook event handler (6 events)
-│   ├── yeelight_relay.py         # HTTP relay daemon (persistent TCP)
-│   ├── yeelight_discover.py      # LAN device discovery
-│   ├── setup.py                  # One-click setup wizard
-│   ├── settings.json             # Hook config template
-│   ├── bulbs.json                # Bulb config (auto-generated)
-│   └── README.md
+├── bridge/                         ← 公共桥接层（必须先安装）
+│   ├── yeelight_relay.py           # HTTP relay 守护进程
+│   ├── yeelight_discover.py        # 局域网设备发现
+│   ├── yeelight_bridge.py          # bridge 管理 CLI
+│   ├── setup.py                    # bridge 一键安装向导
+│   └── bulbs.json                  # 灯泡配置模板
 │
-└── pi-agent/                     ← Pi Agent version
-    ├── index.ts                  # Pi extension entry (TypeScript)
-    ├── yeelight_relay.py         # HTTP relay daemon (shared with claude-hook)
-    ├── yeelight_discover.py      # LAN device discovery (shared with claude-hook)
-    ├── yeelight_ctl.py           # CLI control script
-    ├── bulbs.json                # Bulb config (auto-generated)
-    └── README.md
+└── adapters/                       ← 智能体适配器（可选、可扩展）
+    ├── claude-code/
+    │   ├── hooks.py                # Claude Code hook → HTTP (极薄)
+    │   ├── settings.json           # hook 配置模板
+    │   ├── setup.py                # Claude Code 适配器安装
+    │   └── README.md
+    │
+    └── pi-agent/
+        ├── index.ts                # Pi Agent 扩展 → HTTP (极薄)
+        └── README.md
 ```
 
 ## Design Notes
 
 - **Color system**: traffic light + HCI color theory. Red = stop/error, Green = go/done, Blue = info/thinking, Orange = caution/waiting
 - **Persistent connection**: the relay daemon holds a single TCP connection to the bulb, avoiding frequent handshakes and connection races
-- **Multi-instance safe**: relay has built-in priority coordination; multiple agent sessions don't conflict
-- **Timeout protection**: stdin reads have a 2-second timeout to prevent Claude Code TUI freeze
+- **Multi-instance safe**: relay has built-in priority coordination. Multiple sessions/agents don't conflict — higher-priority state wins (error > executing > writing > reading > thinking > waiting > idle)
+- **Bridge lifetime**: relay daemon stays alive across sessions. No session "owns" it. Stale entries expire after 30s.
+- **Extensible**: to add a new agent, just write a thin adapter (~100 lines) that maps its events to HTTP calls
 
 ## Troubleshooting
 
@@ -137,9 +162,11 @@ yeelight-vibe-control-cfgs/
 | Can't discover bulb | Check LAN Control is enabled in Yeelight App |
 | Bulb not responding | Verify the IP; power-cycle the bulb |
 | `ModuleNotFoundError: yeelight` | `pip install yeelight` |
-| Hooks not firing | Check settings.json path; restart Claude Code |
-| Relay fails to start | Ensure Python 3.8+ and yeelight package installed |
-| Claude Code TUI freeze | Use latest hooks.py (includes stdin timeout fix) |
+| Hooks not firing | Check `~/.claude/settings.json`; restart Claude Code |
+| Bridge relay not running | `python ~/.yeelight-vibe-bridge/yeelight_bridge.py start` |
+| Pi Agent bridge unreachable | Run bridge setup first: `python bridge/setup.py` |
+| Claude Code TUI freeze | Hooks use readline() with timeout; should not freeze |
+| Multiple agents clashing | All sessions use same relay on port 9877; priority aggregation handles it |
 
 ## License
 

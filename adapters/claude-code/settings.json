@@ -1,0 +1,44 @@
+{
+  "_comment": "Yeelight Vibe Bridge — Claude Code hooks 配置模板",
+  "_instructions": "运行 python setup.py 自动完成配置。",
+  "_prerequisite": "先安装 bridge 公共核心: cd ../../bridge && python setup.py",
+  "_architecture": "hooks.py 是薄适配器，仅转换事件 → HTTP → bridge relay。所有灯泡控制逻辑在 ~/.yeelight-vibe-bridge/",
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" user_prompt"
+      }]
+    }],
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" pre_tool"
+      }]
+    }],
+    "PostToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" post_tool"
+      }]
+    }],
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" stop"
+      }]
+    }],
+    "SubagentStop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" subagent_stop"
+      }]
+    }],
+    "Notification": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python \"~/.yeelight-vibe-bridge/hooks.py\" notification"
+      }]
+    }]
+  }
+}

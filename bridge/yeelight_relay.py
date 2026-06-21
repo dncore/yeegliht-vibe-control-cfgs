@@ -173,7 +173,7 @@ def _apply_locked(bulb, state_name):
 
 # ═══════════════ 多实例协调 ═══════════════
 
-STATE_FILE = os.path.expanduser("~/.pi/yeelight-shared.json")
+STATE_FILE = os.path.expanduser("~/.yeelight-vibe-bridge/yeelight-shared.json")
 STALE_TIMEOUT = 30
 CAROUSEL_INTERVAL = 3
 
