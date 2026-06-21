@@ -181,6 +181,38 @@ def validate_bulb(ip, timeout=4):
 
 # ═══════════════════ Claude Code 设置合并 ═══════════════════
 
+INSTALL_DIR = Path.home() / ".claude" / "hooks" / "yeelight-vibe"
+RUNTIME_FILES = ["hooks.py", "yeelight_relay.py", "yeelight_discover.py", "bulbs.json"]
+
+
+def install_files():
+    """
+    将运行所需的脚本复制到永久安装目录 (~/.claude/hooks/yeelight-vibe/)。
+    这样即使用户删除源码仓库，已安装的 hooks 也不受影响。
+    """
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    for filename in RUNTIME_FILES:
+        src = SCRIPT_DIR / filename
+        dst = INSTALL_DIR / filename
+        if src.exists():
+            dst.write_bytes(src.read_bytes())
+    # bulbs.json 如果目标已有灯泡配置，保留不覆盖
+    src_bulbs = SCRIPT_DIR / "bulbs.json"
+    dst_bulbs = INSTALL_DIR / "bulbs.json"
+    if src_bulbs.exists():
+        try:
+            src_cfg = json.loads(src_bulbs.read_text("utf-8"))
+            if dst_bulbs.exists():
+                dst_cfg = json.loads(dst_bulbs.read_text("utf-8"))
+                # 保留目标已有的灯泡
+                if not src_cfg.get("bulbs") and dst_cfg.get("bulbs"):
+                    src_cfg = dst_cfg
+            dst_bulbs.write_text(json.dumps(src_cfg, indent=2, ensure_ascii=False), "utf-8")
+        except Exception:
+            pass
+    print(f"  ✓ 已安装到 {INSTALL_DIR}")
+
+
 def get_claude_settings_path():
     """返回 Claude Code 全局设置文件路径"""
     return Path.home() / ".claude" / "settings.json"
@@ -188,10 +220,10 @@ def get_claude_settings_path():
 
 def generate_hooks_config():
     """
-    生成 hooks 配置块，自动使用当前脚本的绝对路径。
-    在 JSON 中使用正斜杠以兼容所有平台。
+    生成 hooks 配置块，指向永久安装目录 ~/.claude/hooks/yeelight-vibe/。
+    不依赖源码仓库路径，删除仓库不影响 hooks 运行。
     """
-    hooks_path = (SCRIPT_DIR / "hooks.py").as_posix()
+    hooks_path = (INSTALL_DIR / "hooks.py").as_posix()
     return {
         "UserPromptSubmit": [{
             "hooks": [{
@@ -493,6 +525,11 @@ def main():
 
     save_bulbs(cfg)
 
+    # --- 安装运行文件到永久目录 ----------------------------------------
+    print()
+    print("  📦 安装到 ~/.claude/hooks/yeelight-vibe/ ...")
+    install_files()
+
     # --- 写入 Claude Code hooks 配置 -----------------------------------
     print()
     print("-" * 55)
@@ -510,7 +547,7 @@ def main():
         print(f"      • Notification      → 🔄 保持活跃")
     except Exception as e:
         print(f"  ⚠ 自动写入失败: {e}")
-        hooks_path = (SCRIPT_DIR / "hooks.py").as_posix()
+        hooks_path = (INSTALL_DIR / "hooks.py").as_posix()
         print()
         print("  请手动将以下 JSON 添加到 ~/.claude/settings.json:")
         print()
@@ -543,7 +580,7 @@ def main():
     print("  下一步:")
     print("    1. ⚠️  重启 Claude Code 使 hooks 生效")
     print("    2. 测试灯光: ")
-    print(f"       cd {SCRIPT_DIR}")
+    print(f"       cd {INSTALL_DIR.as_posix()}")
     print("       python hooks.py direct thinking")
     print("    3. 启动新 Claude Code 会话 — 灯泡会自动响应！")
     print("=" * 55)

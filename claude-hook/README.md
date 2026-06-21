@@ -78,6 +78,7 @@ python setup.py
 |------|---------|
 | 🔍 发现灯泡 | SSDP 多播 (秒级) → TCP 端口 55443 扫描 (仅主网段，~30s) |
 | 💾 保存配置 | 写入 `bulbs.json`，验证灯泡连通性 |
+| 📦 安装脚本 | 复制运行文件到 `~/.claude/hooks/yeelight-vibe/`（删除仓库不影响） |
 | ⚙️ 写入 hooks | 自动合并到 `~/.claude/settings.json`，无需手动编辑 |
 
 > 💡 如果之前已配置过灯泡，向导会提示复用已有配置，跳过扫描步骤。
@@ -120,7 +121,7 @@ python setup.py
 }
 ```
 
-> ⚠️ 将 `/path/to/claude-hook` 替换为项目实际路径。
+> ⚠️ 将 `/path/to/claude-hook` 替换为项目实际路径。推荐使用 `~/.claude/hooks/yeelight-vibe/`。
 
 ### 测试
 

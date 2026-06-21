@@ -1,6 +1,6 @@
 {
   "_comment": "Yeelight Vibe Control — Claude Code 全局 hooks 配置 (v2)",
-  "_instructions": "推荐使用 python setup.py 自动完成配置。手动配置时参考 hooks 结构如下。",
+  "_instructions": "推荐使用 python setup.py 自动完成配置（会将脚本安装到 ~/.claude/hooks/yeelight-vibe/）。",
   "_test": "配置完成后可测试: python hooks.py direct thinking",
   "_events": "Claude Code 全部 6 种 hook 事件",
   "hooks": {
