@@ -6,6 +6,7 @@ from urllib.request import Request, urlopen
 BRIDGE = "http://127.0.0.1:9877"
 READ_TOOLS = {"Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"}
 WRITE_TOOLS = {"Write","Edit","NotebookEdit"}
+EXEC_TOOLS = {"Bash","PowerShell"}
 WEB_TOOLS = {"WebSearch","WebFetch"}
 WEB_KW = ["curl","wget","http ","fetch","npx ","npm ","pip "]
 
@@ -26,7 +27,7 @@ def read_event():
 def tool_state(name, inp=None):
     if name in READ_TOOLS: return "reading"
     if name in WRITE_TOOLS: return "writing"
-    if name == "Bash":
+    if name in EXEC_TOOLS:
         cmd = str(inp.get("command","") if isinstance(inp, dict) else "")
         return "fetching" if any(kw in cmd.lower() for kw in WEB_KW) else "executing"
     if name in WEB_TOOLS: return "fetching"
@@ -39,7 +40,10 @@ def pre_tool():
     ev = read_event()
     if not ev:
         return post("/api/state", {"state":"thinking","pid":"claude-hook"})
-    perm = ev.get("permissionDecision") or ev.get("permission_decision","")
+    # Check all possible permission field names
+    perm = (ev.get("permissionDecision") or ev.get("permission_decision")
+         or ev.get("permission_required") or ev.get("requires_permission")
+         or ev.get("permission") or ev.get("decision") or "")
     if perm == "ask":
         return post("/api/state", {"state":"waiting","pid":"claude-hook"})
     tn = ev.get("tool_name") or ev.get("toolName","")

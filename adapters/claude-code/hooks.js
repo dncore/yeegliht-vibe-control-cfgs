@@ -10,6 +10,7 @@ const BRIDGE = "http://127.0.0.1:9877";
 const LOG = path.join(os.homedir(), ".yeelight-vibe-bridge", "hook-debug.log");
 const READ_TOOLS = new Set(["Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"]);
 const WRITE_TOOLS = new Set(["Write","Edit","NotebookEdit"]);
+const EXEC_TOOLS = new Set(["Bash","PowerShell"]);  // command execution tools
 const WEB_TOOLS = new Set(["WebSearch","WebFetch"]);
 const WEB_KW = ["curl","wget","http ","fetch","npx ","npm ","pip "];
 
@@ -53,7 +54,7 @@ function readStdin() {
 function toolState(name, input) {
   if (READ_TOOLS.has(name)) return "reading";
   if (WRITE_TOOLS.has(name)) return "writing";
-  if (name === "Bash") {
+  if (EXEC_TOOLS.has(name)) {
     const cmd = (typeof input?.command === "string" ? input.command : "").toLowerCase();
     return WEB_KW.some(kw => cmd.startsWith(kw)) ? "fetching" : "executing";
   }
@@ -75,10 +76,11 @@ async function main() {
     case "pre_tool": {
       const ev = await readStdin();
       if (!ev) { log("  ev=null → thinking"); post("/api/state", { ...base, state: "thinking" }); break; }
-      log("  ev=" + JSON.stringify(ev).slice(0, 200));
-      // Check ALL possible permission field names
+      log("  ev=" + JSON.stringify(ev));
+      // Check ALL possible permission-related fields
       const perm = ev.permissionDecision || ev.permission_decision
-                || ev.permission || ev.decision || ev.permissionDecision2 || "";
+                || ev.permission_required || ev.requires_permission
+                || ev.permission || ev.decision || "";
       log("  perm=" + (perm || "(none)"));
       if (perm === "ask") { log("  → waiting"); post("/api/state", { ...base, state: "waiting" }); break; }
       const tn = ev.tool_name || ev.toolName || "";
