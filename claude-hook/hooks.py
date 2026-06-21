@@ -285,18 +285,9 @@ def _read_event():
     """
     从 stdin 读取 Claude Code 传入的 JSON 事件。
     
-    防御策略:
-      1. isatty() 检查: 如果 stdin 是交互终端（非管道），不可能有数据
-      2. 超时保护: 用独立线程读取，超时 2 秒自动放弃
-      
-    sys.stdin.read() 是阻塞调用 — 如果 Claude Code 没有向管道写数据，
-    会永久卡住，导致 Claude Code TUI 冻结。这个函数用线程超时规避此问题。
+    用独立线程 + 2 秒超时读取，防止 sys.stdin.read() 永久阻塞导致
+    Claude Code TUI 冻结。超时后返回 None，调用方用默认状态 fallback。
     """
-    # stdin 是终端 = 没有管道数据（Claude Code 不会以 TTY 方式传事件）
-    if sys.stdin.isatty():
-        return None
-    
-    # 带超时的线程读取 — 防止 stdin.read() 永久阻塞
     result = [None]
     def _do_read():
         try:
