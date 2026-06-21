@@ -76,28 +76,21 @@
 
 ## 快速开始
 
-### 1. 安装 Bridge（必须 — 一次性，所有 agent 共用）
-
 ```bash
-cd bridge
-pip install yeelight
-python setup.py
-# 交互式向导: 发现灯泡 → 保存配置 → 安装到 ~/.yeelight-vibe-bridge/
-```
+# 1. 安装 bridge（一条命令）
+pip install .
+yeelight-bridge setup
+# 交互式: 发现灯泡 → 保存配置 → 安装到 ~/.yeelight-vibe-bridge/
 
-### 2. 安装智能体适配器（可选 — 根据需要选择）
+# 2. 安装智能体适配器
 
-**Claude Code:**
-```bash
-cd adapters/claude-code
-python setup.py
-# 写入 hooks 配置到 ~/.claude/settings.json → 重启 Claude Code
-```
+# Claude Code:
+yeelight-bridge adapter claude-code
+# 重启 Claude Code 生效
 
-**Pi Agent:**
-```bash
-cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
-# 启动 pi，灯泡配置由 bridge 统一管理
+# Pi Agent:
+yeelight-bridge adapter pi-agent  # 显示安装说明
+# 或: cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
 ```
 
 ## 灯光状态参考

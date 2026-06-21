@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "yeelight-vibe-bridge"
+version = "2.0.0"
+description = "Real-time AI agent status lighting for Yeelight smart bulbs"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Yeelight Vibe Bridge contributors"}]
+dependencies = [
+    "yeelight",
+]
+
+[project.scripts]
+yeelight-bridge = "bridge.yeelight_bridge:main"
+
+[tool.setuptools.packages.find]
+include = ["bridge*"]

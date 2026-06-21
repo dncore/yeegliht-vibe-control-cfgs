@@ -80,28 +80,21 @@
 
 ## Quick Start
 
-### 1. Install Bridge (required — once for all agents)
-
 ```bash
-cd bridge
-pip install yeelight
-python setup.py
-# Interactive wizard: discovers bulbs → saves config → installs to ~/.yeelight-vibe-bridge/
-```
+# 1. Install bridge (one command)
+pip install .
+yeelight-bridge setup
+# Interactive: discovers bulbs → saves config → installs to ~/.yeelight-vibe-bridge/
 
-### 2. Install Agent Adapter (optional — pick your agent)
+# 2. Install adapter for your agent
 
-**Claude Code:**
-```bash
-cd adapters/claude-code
-python setup.py
-# Writes hooks config to ~/.claude/settings.json → restart Claude Code
-```
+# Claude Code:
+yeelight-bridge adapter claude-code
+# Restart Claude Code to apply
 
-**Pi Agent:**
-```bash
-cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
-# Start pi, all bulbs/config managed by bridge
+# Pi Agent:
+yeelight-bridge adapter pi-agent  # shows instructions
+# Or: cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
 ```
 
 ## State Color Reference

@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Yeelight Vibe Bridge — 管理 CLI
-================================
-公共桥接层的统一管理入口。所有智能体适配器（Claude Code、Pi Agent 等）
-共用同一个 relay 守护进程，通过 HTTP API 通信。
+Yeelight Vibe Bridge — CLI
+===========================
+Unified management entry point for the bridge platform.
+All agent adapters (Claude Code, Pi Agent, etc.) share the same relay daemon.
 
-用法:
-    python yeelight_bridge.py install             安装 bridge 到 ~/.yeelight-vibe-bridge/
-    python yeelight_bridge.py start [bulb_ip]      启动 relay 守护进程
-    python yeelight_bridge.py stop                 停止 relay 守护进程
-    python yeelight_bridge.py status               检查 relay 状态
-    python yeelight_bridge.py discover             局域网发现灯泡
-    python yeelight_bridge.py setup-bulbs          交互式灯泡配置
-    python yeelight_bridge.py test <state> [ip]    直接测试灯光状态
-    python yeelight_bridge.py strategy <name>       切换协调策略
+Usage:
+    yeelight-bridge setup                       Full setup wizard (discover + install)
+    yeelight-bridge adapter claude-code         Install Claude Code hooks
+    yeelight-bridge adapter pi-agent            Show Pi Agent install instructions
+    yeelight-bridge start [bulb_ip]             Start relay daemon
+    yeelight-bridge stop                        Stop relay daemon
+    yeelight-bridge status                      Check relay status
+    yeelight-bridge discover                    Discover bulbs on LAN
+    yeelight-bridge setup-bulbs                 Interactive bulb configuration
+    yeelight-bridge test <state> [ip]           Test a light state directly
+    yeelight-bridge strategy <name>             Switch coordination strategy
 """
 
 import json
@@ -478,8 +480,116 @@ def cmd_ensure(ip=None):
 
 # ═══════════════ CLI 入口 ═══════════════
 
+def cmd_setup():
+    """完整 bridge 安装向导（发现灯泡 + 保存配置 + 安装文件）"""
+    # 运行 bridge/setup.py（独立脚本，有自己的交互流程）
+    setup_script = SCRIPT_DIR / "setup.py"
+    if not setup_script.exists():
+        # pip install 后脚本在 site-packages/bridge/，但 setup.py 可能不在
+        # 回退: 检查 BRIDGE_DIR
+        setup_script = BRIDGE_DIR / "setup.py"
+    if setup_script.exists():
+        subprocess.run([PYTHON_CMD, str(setup_script)])
+    else:
+        # 内联最小安装: 安装文件 + 配置灯泡
+        print("setup.py 未找到，使用内联安装...")
+        cmd_install()
+        print()
+        print("接下来配置灯泡:")
+        cmd_setup_bulbs()
+
+
+def cmd_adapter(agent=None):
+    """安装智能体适配器"""
+    if not agent:
+        print("用法: yeelight-bridge adapter <agent>")
+        print()
+        print("可用适配器:")
+        print("  claude-code    安装 Claude Code hooks")
+        print("  pi-agent       安装 Pi Agent 扩展")
+        sys.exit(1)
+
+    agent = agent.lower()
+
+    if agent == "claude-code":
+        # 找到 adapters/claude-code 目录
+        adapter_src = None
+        candidates = [
+            SCRIPT_DIR.parent / "adapters" / "claude-code",
+            Path(__file__).parent.parent / "adapters" / "claude-code",
+            Path.cwd() / "adapters" / "claude-code",
+        ]
+        for c in candidates:
+            if (c / "hooks.py").exists():
+                adapter_src = c
+                break
+
+        if not adapter_src:
+            print("  ❌ 未找到 adapters/claude-code/ 目录")
+            print("    请从项目仓库运行此命令")
+            sys.exit(1)
+
+        # 检查 bridge 已安装
+        if not (BRIDGE_DIR / "yeelight_relay.py").exists():
+            print("  ❌ Bridge 未安装，请先运行: yeelight-bridge setup")
+            sys.exit(1)
+
+        # 复制 hooks.py
+        src_hooks = adapter_src / "hooks.py"
+        dst_hooks = BRIDGE_DIR / "hooks.py"
+        dst_hooks.write_bytes(src_hooks.read_bytes())
+        print(f"  ✓ hooks.py → {dst_hooks}")
+
+        # 写入 Claude Code hooks 配置
+        hooks_path = dst_hooks.as_posix()
+        hooks_config = {
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" user_prompt'}]}],
+            "PreToolUse": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" pre_tool'}]}],
+            "PostToolUse": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" post_tool'}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" stop'}]}],
+            "SubagentStop": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" subagent_stop'}]}],
+            "Notification": [{"hooks": [{"type": "command", "command": f'python "{hooks_path}" notification'}]}],
+        }
+
+        claude_settings = Path.home() / ".claude" / "settings.json"
+        existing = {}
+        if claude_settings.exists():
+            try:
+                existing = json.loads(claude_settings.read_text("utf-8"))
+            except json.JSONDecodeError:
+                pass
+
+        existing["hooks"] = hooks_config
+        claude_settings.parent.mkdir(parents=True, exist_ok=True)
+        claude_settings.write_text(json.dumps(existing, indent=2, ensure_ascii=False), "utf-8")
+
+        print(f"  ✓ hooks 配置已写入 {claude_settings}")
+        print(f"    共 6 个 hook 事件")
+        print()
+        print("  ⚠️  重启 Claude Code 使 hooks 生效")
+
+    elif agent == "pi-agent":
+        print("Pi Agent 适配器安装:")
+        print()
+        print("  将 adapters/pi-agent/ 复制到 Pi Agent 扩展目录:")
+        print(f"    cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe")
+        print()
+        print("  或 Windows PowerShell:")
+        print(f"    Copy-Item -Recurse adapters/pi-agent $env:USERPROFILE/.pi/agent/extensions/yeelight-vibe")
+        print()
+        print("  之后启动 pi agent 即生效。")
+        print("  前提: bridge 已安装 (yeelight-bridge setup)")
+
+    else:
+        print(f"未知适配器: {agent}")
+        print("可用: claude-code, pi-agent")
+        sys.exit(1)
+
+
 COMMANDS = {
-    "install":     (cmd_install,     "安装 bridge 到 ~/.yeelight-vibe-bridge/"),
+    "setup":       (cmd_setup,       "完整安装向导 (发现灯泡 + 安装 bridge)"),
+    "install":     (cmd_install,     "安装 bridge 文件到 ~/.yeelight-vibe-bridge/"),
+    "adapter":     (cmd_adapter,     "安装智能体适配器 <claude-code|pi-agent>"),
     "start":       (cmd_start,       "启动 relay 守护进程 [可选: 灯泡IP]"),
     "stop":        (cmd_stop,        "停止 relay 守护进程"),
     "status":      (cmd_status,      "查看 relay 状态"),
@@ -492,27 +602,31 @@ COMMANDS = {
 
 def main():
     if len(sys.argv) < 2:
-        print("Yeelight Vibe Bridge — 公共桥接层管理")
+        print("Yeelight Vibe Bridge")
         print()
-        print("用法: python yeelight_bridge.py <命令> [参数...]")
+        print("Usage: yeelight-bridge <command> [args...]")
+        print()
+        print("Quick start:")
+        print("  yeelight-bridge setup                    Full setup wizard")
+        print("  yeelight-bridge adapter claude-code      Install Claude Code adapter")
         print()
         max_len = max(len(k) for k in COMMANDS)
         for name, (fn, desc) in COMMANDS.items():
-            print(f"  {name:<{max_len+2}} {desc}")
+            if name not in ("ensure",):
+                print(f"  {name:<{max_len+2}} {desc}")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
     if cmd not in COMMANDS:
-        print(f"未知命令: {cmd}")
-        print(f"可用命令: {', '.join(COMMANDS)}")
+        print(f"Unknown command: {cmd}")
+        print(f"Available: {', '.join(COMMANDS)}")
         sys.exit(1)
 
     fn, _ = COMMANDS[cmd]
 
-    # 传递剩余参数
     if cmd == "test":
         if len(sys.argv) < 3:
-            print("用法: python yeelight_bridge.py test <state> [ip]")
+            print("Usage: yeelight-bridge test <state> [ip]")
             sys.exit(1)
         fn(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     elif cmd == "start":
@@ -522,9 +636,11 @@ def main():
         sys.exit(0 if ok else 1)
     elif cmd == "strategy":
         if len(sys.argv) < 3:
-            print("用法: python yeelight_bridge.py strategy <priority|active|carousel>")
+            print("Usage: yeelight-bridge strategy <priority|active|carousel>")
             sys.exit(1)
         fn(sys.argv[2])
+    elif cmd == "adapter":
+        fn(sys.argv[2] if len(sys.argv) > 2 else None)
     else:
         fn()
 
