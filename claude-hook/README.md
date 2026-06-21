@@ -52,10 +52,12 @@ Claude Code hooks → hooks.py → HTTP → relay 守护进程(9877) → 持久 
 ```
 
 每次 Claude Code 会话中触发 hook 时，`hooks.py` 自动管理 relay 生命周期：
-- `UserPromptSubmit` → 确保 relay 在线 + 显示等待状态
-- `PreToolUse` → 根据工具类型映射灯光状态
-- `PostToolUse` → 检测错误状态
-- `Stop` → 恢复空闲待命
+- `UserPromptSubmit` → 标记 Claude 开始工作 (🧠 thinking)
+- `PreToolUse` → 工具类型映射灯光 / 权限等待 (🟡 waiting)
+- `PostToolUse` → 成功继续工作 / 检测错误 (🔴 error)
+- `SubagentStop` → 子任务结束，恢复工作状态
+- `Notification` → 保持 relay 活跃，不改变状态
+- `Stop` → 会话结束，恢复空闲待命 (💤 idle)
 
 relay 守护进程保持**单一 TCP 连接**到灯泡，所有状态变化通过 HTTP 瞬时完成。
 
@@ -105,6 +107,12 @@ python setup.py
     }],
     "Stop": [{
       "hooks": [{"type": "command", "command": "python \"/path/to/claude-hook/hooks.py\" stop"}]
+    }],
+    "SubagentStop": [{
+      "hooks": [{"type": "command", "command": "python \"/path/to/claude-hook/hooks.py\" subagent_stop"}]
+    }],
+    "Notification": [{
+      "hooks": [{"type": "command", "command": "python \"/path/to/claude-hook/hooks.py\" notification"}]
     }]
   }
 }
@@ -124,19 +132,25 @@ python hooks.py direct stop       # 终止灯效
 
 ## 状态颜色映射
 
-| Claude Code 事件 | 工具 | 灯光状态 |
-|-----------------|------|---------|
-| UserPromptSubmit | — | 🟡 琥珀 等待用户 |
-| PreToolUse | 需授权 (Do you want to proceed?) | 🟡 琥珀 等待用户 |
-| PreToolUse | Bash (命令执行) | ⚙️ 橙 呼吸 |
-| PreToolUse | Bash (curl/wget等) | 🌐 蓝 闪烁 |
-| PreToolUse | Read / Grep / Glob | 📖 青 呼吸 |
-| PreToolUse | Write / Edit | ✏️ 玫红 呼吸 |
-| PreToolUse | WebSearch / WebFetch | 🌐 蓝 闪烁 |
-| PreToolUse | 其他 | 🧠 蓝 呼吸 |
-| PostToolUse | 正常返回 | 🧠 蓝 呼吸 |
-| PostToolUse | 出错 | 🔴 正红 常亮 |
-| Stop | — | 💤 冰蓝 待命 |
+基于 Claude Code 全部 **6 种** hook 事件重新设计:
+
+| Claude Code 事件 | 条件 | 灯光状态 | 含义 |
+|-----------------|------|---------|------|
+| `UserPromptSubmit` | — | 🧠 蓝 呼吸 (thinking) | Claude 开始工作，用户等待 |
+| `PreToolUse` | 需授权 (Do you want to proceed?) | 🟡 琥珀 常亮 (waiting) | Claude 等待用户确认 |
+| `PreToolUse` | Bash 命令执行 | ⚙️ 橙 呼吸 (executing) | 正在执行命令 |
+| `PreToolUse` | Bash (curl/wget/npm/pip) | 🌐 蓝 闪烁 (fetching) | 下载/安装/网络请求 |
+| `PreToolUse` | Read / Grep / Glob | 📖 青 呼吸 (reading) | 正在读取文件 |
+| `PreToolUse` | Write / Edit | ✏️ 玫红 呼吸 (writing) | 正在写入/编辑文件 |
+| `PreToolUse` | WebSearch / WebFetch | 🌐 蓝 闪烁 (fetching) | 正在访问网络 |
+| `PreToolUse` | 其他工具 | 🧠 蓝 呼吸 (thinking) | 通用工作状态 |
+| `PostToolUse` | 正常返回 | 🧠 蓝 呼吸 (thinking) | 继续下一个任务 |
+| `PostToolUse` | 出错 | 🔴 正红 常亮 (error) | 工具执行失败 |
+| `SubagentStop` | — | 🧠 蓝 呼吸 (thinking) | 子任务完成，继续 |
+| `Notification` | — | (保持当前状态) | 系统通知，不改变灯光 |
+| `Stop` | — | 💤 冰蓝 常亮 (idle) | 会话结束，待命 |
+
+> **设计原则**: "thinking" = Claude 在工作（你等着），"waiting" = Claude 在等你操作（快响应）。
 
 完整状态列表：
 

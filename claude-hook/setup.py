@@ -216,7 +216,19 @@ def generate_hooks_config():
                 "type": "command",
                 "command": f'python "{hooks_path}" stop'
             }]
-        }]
+        }],
+        "SubagentStop": [{
+            "hooks": [{
+                "type": "command",
+                "command": f'python "{hooks_path}" subagent_stop'
+            }]
+        }],
+        "Notification": [{
+            "hooks": [{
+                "type": "command",
+                "command": f'python "{hooks_path}" notification'
+            }]
+        }],
     }
 
 
@@ -489,11 +501,13 @@ def main():
     try:
         settings_path, final_settings = merge_claude_settings()
         print(f"  ✓ hooks 已写入 {settings_path}")
-        print(f"    共配置 4 个事件钩子:")
-        print(f"      • UserPromptSubmit  → 🟡 等待用户")
-        print(f"      • PreToolUse        → 🧠 工具类型 → 灯光映射")
-        print(f"      • PostToolUse       → ✅/🔴 成功/错误检测")
+        print(f"    共配置 6 个事件钩子:")
+        print(f"      • UserPromptSubmit  → 🧠 思考中")
+        print(f"      • PreToolUse        → 🟡 等授权 / 🛠 工具状态")
+        print(f"      • PostToolUse       → ✅ 成功 / 🔴 错误")
         print(f"      • Stop              → 💤 恢复待命")
+        print(f"      • SubagentStop      → 🧠 子任务完成")
+        print(f"      • Notification      → 🔄 保持活跃")
     except Exception as e:
         print(f"  ⚠ 自动写入失败: {e}")
         hooks_path = (SCRIPT_DIR / "hooks.py").as_posix()
@@ -512,6 +526,12 @@ def main():
         print(f'    }}],')
         print(f'    "Stop": [{{')
         print(f'      "hooks": [{{"type": "command", "command": "python \\"{hooks_path}\\" stop"}}]')
+        print(f'    }}],')
+        print(f'    "SubagentStop": [{{')
+        print(f'      "hooks": [{{"type": "command", "command": "python \\"{hooks_path}\\" subagent_stop"}}]')
+        print(f'    }}],')
+        print(f'    "Notification": [{{')
+        print(f'      "hooks": [{{"type": "command", "command": "python \\"{hooks_path}\\" notification"}}]')
         print(f'    }}]')
         print(f'  }}')
 

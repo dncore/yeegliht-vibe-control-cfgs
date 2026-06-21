@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Yeelight Vibe Control — Claude Code 官方 Hooks 版本
-====================================================
-通过 Yeelight 智能灯实时显示 Claude Code 运行状态。
+Yeelight Vibe Control — Claude Code 官方 Hooks 版本 (v2)
+==========================================================
+基于 Claude Code 全部 6 种 hook 事件重新设计灯光控制逻辑。
+
+设计原则:
+  - "thinking"  = Claude 正在工作（默认态，用户应等待）
+  - "waiting"   = Claude 被阻塞，等待用户操作（权限确认）
+  - 工具状态    = 描述 Claude 正在做什么（读/写/执行/网络）
+  - "error"     = 出错了
+  - "idle"      = 会话结束，空闲待命
 
 用法:
-    python hooks.py pre_tool     # PreToolUse hook → 映射工具类型 → HTTP → relay
-    python hooks.py post_tool    # PostToolUse hook → 错误检测 → HTTP → relay
-    python hooks.py stop         # Stop hook → 恢复 idle → 关闭 relay
-    python hooks.py user_prompt  # UserPromptSubmit hook → 确保 relay 在线
-    python hooks.py direct <state>  # 手动测试，直接控制灯泡
+    python hooks.py <mode>     # mode: pre_tool | post_tool | stop | ...
 
 架构:
-    Claude Code hooks → hooks.py → HTTP → relay 守护进程 → 持久 TCP → 灯泡
-
-状态颜色基于交通信号灯 + HCI 色彩理论设计。
+    Claude Code hooks → hooks.py → HTTP → relay 守护进程(9877) → 持久 TCP → 灯泡
 """
 
 import json
@@ -72,16 +73,11 @@ def find_python():
         except Exception:
             return False
 
-    # 1. 优先使用当前 Python
     if has_yeelight(sys.executable):
         return sys.executable
-
-    # 2. 尝试常见命令
     for cmd in ["python3", "python"]:
         if has_yeelight(cmd):
             return cmd
-
-    # 3. 回退硬编码路径
     fallbacks = [
         os.path.expanduser("~\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"),
         "C:\\Python312\\python.exe",
@@ -91,13 +87,11 @@ def find_python():
     for p in fallbacks:
         if os.path.exists(p) and has_yeelight(p):
             return p
-
     return sys.executable
 
 PYTHON_CMD = find_python()
 
 def is_relay_running():
-    """检查 relay 是否在运行且可用"""
     try:
         req = Request(f"{RELAY_URL}/api/health", method="GET")
         with urlopen(req, timeout=2) as resp:
@@ -107,8 +101,6 @@ def is_relay_running():
         return False
 
 def kill_old_relay():
-    """清理旧的 relay 进程"""
-    # 方法1: 通过 PID 文件
     if RELAY_PID_FILE.exists():
         try:
             saved_pid = int(RELAY_PID_FILE.read_text().strip())
@@ -130,7 +122,6 @@ def kill_old_relay():
         except Exception:
             pass
 
-    # 方法2: 杀旧 relay 进程
     try:
         if sys.platform == "win32":
             subprocess.run(
@@ -142,15 +133,13 @@ def kill_old_relay():
     except Exception:
         pass
 
-def start_relay(bulb_ip):
-    """启动 relay 守护进程"""
+def start_relay(bulb_ip=None):
     bulb = get_default_bulb()
     if not bulb and not bulb_ip:
         return False
     ip = bulb_ip or bulb["ip"]
 
     if is_relay_running():
-        # 检查是否连接正确灯泡
         try:
             req = Request(f"{RELAY_URL}/api/health", method="GET")
             with urlopen(req, timeout=2) as resp:
@@ -159,7 +148,6 @@ def start_relay(bulb_ip):
                     return True
         except Exception:
             pass
-        # IP 不匹配，重启 relay
         kill_old_relay()
 
     kill_old_relay()
@@ -174,19 +162,15 @@ def start_relay(bulb_ip):
         if proc.pid:
             RELAY_PID_FILE.write_text(str(proc.pid))
 
-        # 等待 relay 就绪
         for _ in range(30):
             time.sleep(0.2)
             if is_relay_running():
                 return True
-
         return False
     except Exception:
         return False
 
 def stop_relay():
-    """停止 relay 守护进程"""
-    # 发送 off 状态
     try:
         data = json.dumps({"state": "off", "pid": "claude-hook"}).encode()
         req = Request(f"{RELAY_URL}/api/state", data=data, method="POST")
@@ -194,12 +178,10 @@ def stop_relay():
         urlopen(req, timeout=2)
     except Exception:
         pass
-
     time.sleep(0.5)
     kill_old_relay()
 
 def ensure_relay():
-    """确保 relay 在线，不在则启动"""
     if is_relay_running():
         return True
     bulb = get_default_bulb()
@@ -208,22 +190,34 @@ def ensure_relay():
     return start_relay(bulb["ip"])
 
 # ═══════════════════════════════════════════════════════════════════
-#  状态映射
+#  工具 → 灯光状态映射
 # ═══════════════════════════════════════════════════════════════════
 
-# 工具类型 → 灯光状态
-READ_TOOLS = {"Read", "LS", "Grep", "Glob", "Task", "TodoRead", "NotebookRead"}
-WRITE_TOOLS = {"Write", "Edit", "NotebookEdit"}
-WEB_TOOLS = {"WebSearch", "WebFetch"}
+READ_TOOLS = {
+    "Read", "LS", "Grep", "Glob",
+    "Task", "TodoRead", "NotebookRead",
+}
+WRITE_TOOLS = {
+    "Write", "Edit", "NotebookEdit",
+}
+WEB_TOOLS = {
+    "WebSearch", "WebFetch",
+}
 
 def tool_to_state(tool_name, tool_input=None):
-    """Claude Code 工具名 → 灯光状态"""
+    """
+    Claude Code 工具名 → 灯光状态。
+    
+    设计意图:
+      - 让用户通过灯光颜色一眼看出 Claude 在做什么类型的操作
+      - 读文件 = 青色呼吸、写文件 = 玫红呼吸、执行命令 = 橙色呼吸
+      - 网络操作 = 蓝色闪烁（频率更高，一眼可见）
+    """
     if tool_name in READ_TOOLS:
         return "reading"
     if tool_name in WRITE_TOOLS:
         return "writing"
     if tool_name == "Bash":
-        # 检查 bash 命令内容识别网络操作
         cmd = ""
         if tool_input and isinstance(tool_input, dict):
             cmd = tool_input.get("command", "")
@@ -233,7 +227,6 @@ def tool_to_state(tool_name, tool_input=None):
         return "executing"
     if tool_name in WEB_TOOLS:
         return "fetching"
-    # 默认: 思考中
     return "thinking"
 
 # ═══════════════════════════════════════════════════════════════════
@@ -241,9 +234,9 @@ def tool_to_state(tool_name, tool_input=None):
 # ═══════════════════════════════════════════════════════════════════
 
 def send_state(state):
-    """通过协调层更新灯光状态"""
+    """通过协调层更新灯光状态（多实例安全）"""
     if not ensure_relay():
-        return  # relay 不可用，静默跳过
+        return
     try:
         data = json.dumps({
             "state": state,
@@ -256,7 +249,7 @@ def send_state(state):
         pass
 
 def send_direct(state):
-    """直接控制灯光（绕过协调，用于手动测试及 stop）"""
+    """直接控制灯光（绕过协调层，用于 Stop 及手动测试）"""
     if not ensure_relay():
         return
     try:
@@ -268,30 +261,59 @@ def send_direct(state):
         pass
 
 # ═══════════════════════════════════════════════════════════════════
-#  Hook 事件处理
+#  Hook 事件处理 — 基于 Claude Code 官方 6 种事件重新设计
 # ═══════════════════════════════════════════════════════════════════
 
 def handle_user_prompt():
-    """UserPromptSubmit: 确保 relay 在线，显示等待状态"""
+    """
+    UserPromptSubmit: 用户提交了 Prompt。
+    
+    灯光: "thinking" (🧠 蓝呼吸)
+    含义: Claude 开始工作，正在分析请求、生成思考过程。
+          用户应该等待，不需要操作。
+    
+    设计理由: 区别于 "waiting" (等用户授权)。
+             "thinking" = Claude 在忙，"waiting" = Claude 在等你。
+    """
     ensure_relay()
-    send_state("waiting")
+    send_state("thinking")
+
+
+def _read_event():
+    """从 stdin 读取 Claude Code 传入的 JSON 事件，失败返回 None"""
+    try:
+        return json.loads(sys.stdin.read())
+    except Exception:
+        return None
+
 
 def handle_pre_tool():
-    """PreToolUse: 根据即将调用的工具设置灯光"""
+    """
+    PreToolUse: Claude 即将调用一个工具。
+    
+    三级判断:
+      1. permissionDecision == "ask"   → "waiting" (🟡 琥珀)
+         Claude 弹出了 "Do you want to proceed?"，需要用户确认。
+         这是唯一真正需要用户交互的阻塞点。
+         
+      2. 工具类型映射 → 具体状态
+         Bash         → "executing" (⚙️ 橙呼吸)
+         Bash(网络)   → "fetching"   (🌐 蓝闪烁)
+         Read/Grep等  → "reading"   (📖 青呼吸)
+         Write/Edit   → "writing"   (✏️ 玫红呼吸)
+         WebSearch等  → "fetching"   (🌐 蓝闪烁)
+         
+      3. 未知工具      → "thinking"  (🧠 蓝呼吸)
+    """
     if not ensure_relay():
         return
 
-    # 从 stdin 读取 Claude Code hook 传入的 JSON
-    try:
-        event = json.loads(sys.stdin.read())
-    except Exception:
-        # 无法解析 stdin，fallback 到 thinking
+    event = _read_event()
+    if event is None:
         send_state("thinking")
         return
 
-    # 当工具需要用户授权时 (permissionDecision == "ask")，
-    # Claude Code 会弹出 "Do you want to proceed?" 对话框等待用户响应。
-    # 此时应显示 "等待用户" 而非工具状态。
+    # 第 1 级: 权限检查 — Claude 在等用户
     permission = (
         event.get("permissionDecision")
         or event.get("permission_decision", "")
@@ -300,23 +322,34 @@ def handle_pre_tool():
         send_state("waiting")
         return
 
+    # 第 2 级: 工具类型映射
     tool_name = event.get("tool_name", event.get("toolName", ""))
     tool_input = event.get("tool_input", event.get("toolInput", {}))
     state = tool_to_state(tool_name, tool_input)
     send_state(state)
 
+
 def handle_post_tool():
-    """PostToolUse: 检测结果状态"""
+    """
+    PostToolUse: Claude 刚完成一个工具调用。
+    
+    灯光:
+      - 出错: "error" (🔴 正红常亮) — 工具执行失败
+      - 成功: "thinking" (🧠 蓝呼吸) — 继续工作/准备下一个工具
+    
+    设计理由: 工具结束后 Claude 可能继续调用下一个工具或生成文本。
+             回到 "thinking" 是正确的默认态。
+             错误时用醒目的红色让用户知道出了问题。
+    """
     if not ensure_relay():
         return
 
-    try:
-        event = json.loads(sys.stdin.read())
-    except Exception:
+    event = _read_event()
+    if event is None:
         send_state("thinking")
         return
 
-    # 检查是否有错误
+    # 检测错误
     is_error = False
     tool_response = event.get("tool_response", event.get("toolResponse", {}))
     if isinstance(tool_response, dict):
@@ -329,73 +362,119 @@ def handle_post_tool():
     else:
         send_state("thinking")
 
+
 def handle_stop():
-    """Stop: agent 停止，恢复空闲状态"""
+    """
+    Stop: Agent 会话结束。
+    
+    灯光: "idle" (💤 冰蓝常亮)
+    含义: Claude 完成了所有工作，等待下一次 Prompt。
+    
+    stopReason 处理:
+      - "end_turn"        → idle (正常完成)
+      - "max_turns"       → idle (达到上限)
+      - 其他/错误相关     → idle (会话结束，恢复待命)
+    
+    注意: 使用 send_direct 而非 send_state，因为 Stop 是最终状态，
+          不需要经过多实例协调。
+    """
+    # 读取 Stop 事件数据（可选，用于未来扩展）
+    event = _read_event()
+
+    # 最终状态: idle
     send_direct("idle")
-    # 可选: 完全关闭 relay
+
+    # 可选: 完全关闭 relay 释放连接
     # stop_relay()
 
+
 def handle_subagent_stop():
-    """SubagentStop: 子代理停止"""
+    """
+    SubagentStop: 子代理任务完成。
+    
+    灯光: "thinking" (🧠 蓝呼吸)
+    含义: 子任务完成，主代理继续工作。
+          对用户来说，这只是 Claude 工作流程中的一步。
+    
+    注意: 子代理可能有自已的事件，但我们不关心细节，
+          只恢复主代理的工作状态。
+    """
+    if not ensure_relay():
+        return
     send_state("thinking")
 
+
 def handle_notification():
-    """Notification: 处理通知事件"""
-    # 不改变灯光状态，仅保持 relay 活跃
+    """
+    Notification: Claude Code 系统通知事件。
+    
+    策略: 保持 relay 活跃，不改变当前灯光状态。
+    
+    原因: 通知事件有多种类型（状态更新、系统消息等），
+          大多数不表示 Claude 工作状态的变化。
+          灯光应该保持当前的 "thinking" / "executing" / "reading" 等状态。
+          
+    未来可根据 notification_type 做更精细的控制。
+    """
     ensure_relay()
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  CLI 入口
 # ═══════════════════════════════════════════════════════════════════
 
+HANDLERS = {
+    "pre_tool":       handle_pre_tool,
+    "post_tool":      handle_post_tool,
+    "stop":           handle_stop,
+    "subagent_stop":  handle_subagent_stop,
+    "user_prompt":    handle_user_prompt,
+    "notification":   handle_notification,
+}
+
 def main():
     if len(sys.argv) < 2:
         print("用法: python hooks.py <mode> [args...]")
-        print("模式:")
-        print("  pre_tool        PreToolUse hook")
-        print("  post_tool       PostToolUse hook")
-        print("  stop            Stop hook")
-        print("  user_prompt     UserPromptSubmit hook")
-        print("  subagent_stop   SubagentStop hook")
-        print("  notification    Notification hook")
-        print("  direct <state>  直接控制灯泡 (测试用)")
-        print("  setup           启动 relay (手动)")
-        print("  shutdown        关闭 relay (手动)")
+        print()
+        print("Hook 事件 (Claude Code 设置中配置):")
+        print("  user_prompt      UserPromptSubmit — 用户提交 Prompt")
+        print("  pre_tool         PreToolUse      — 工具即将执行")
+        print("  post_tool        PostToolUse     — 工具执行完毕")
+        print("  stop             Stop            — 会话停止")
+        print("  subagent_stop    SubagentStop    — 子代理停止")
+        print("  notification     Notification    — 系统通知")
+        print()
+        print("手动控制 (调试/测试):")
+        print("  direct <state>   直接控制灯泡")
+        print("  setup            启动 relay 守护进程")
+        print("  shutdown         关闭 relay 守护进程")
+        print()
+        print("可用状态: idle thinking reading writing executing fetching waiting success error stop off")
         sys.exit(1)
 
     mode = sys.argv[1].lower()
 
-    handlers = {
-        "pre_tool": handle_pre_tool,
-        "post_tool": handle_post_tool,
-        "stop": handle_stop,
-        "subagent_stop": handle_subagent_stop,
-        "user_prompt": handle_user_prompt,
-        "notification": handle_notification,
-    }
+    if mode in HANDLERS:
+        HANDLERS[mode]()
 
-    if mode in handlers:
-        handlers[mode]()
     elif mode == "direct":
         if len(sys.argv) < 3:
             print("用法: python hooks.py direct <state>")
-            print("状态: idle, thinking, reading, writing, executing, fetching, waiting, success, error, off, stop")
             sys.exit(1)
         state = sys.argv[2]
-        # 兼容旧名称
         aliases = {
             "green": "idle", "orange": "waiting", "flash": "thinking",
             "context": "querying", "bash": "executing", "web": "fetching",
             "read": "reading", "write": "writing",
         }
         state = aliases.get(state, state)
-        if state in ("stop",):
-            # stop 效果: 终止灯效恢复白光
+        if state == "stop":
             send_direct("stop")
             print(f"OK - 已终止灯效")
         else:
             send_direct(state)
             print(f"OK - {state}")
+
     elif mode == "setup":
         bulb = get_default_bulb()
         if not bulb:
@@ -403,12 +482,15 @@ def main():
             sys.exit(1)
         ok = start_relay(bulb["ip"])
         print(f"OK - relay {'已启动' if ok else '启动失败'}")
+
     elif mode == "shutdown":
         stop_relay()
         print("OK - relay 已关闭")
+
     else:
         print(f"未知模式: {mode}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
