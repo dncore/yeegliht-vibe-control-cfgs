@@ -136,6 +136,7 @@ cp -r pi-agent ~/.pi/agent/extensions/yeelight-vibe
 | error | 常亮 | 🟥 正红 (255,30,30) | 出错停止 |
 
 设计依据：交通信号灯颜色体系（🟢 通行 / 🟡 注意 / 🔴 停止）+ HCI 人机交互色彩理论。
+状态映射与 Claude Code Hook 版对齐：相同语义 → 相同灯光效果。
 
 ## 文件结构
 

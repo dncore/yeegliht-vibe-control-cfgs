@@ -8,8 +8,9 @@ Yeelight Vibe Control — Claude Code 官方 Hooks 版本 (v2)
   - "thinking"  = Claude 正在工作（默认态，用户应等待）
   - "waiting"   = Claude 被阻塞，等待用户操作（权限确认）
   - 工具状态    = 描述 Claude 正在做什么（读/写/执行/网络）
+  - "success"   = 会话结束，任务完成
   - "error"     = 出错了
-  - "idle"      = 会话结束，空闲待命
+  - 状态映射与 Pi Agent 版对齐：相同语义 → 相同灯光
 
 用法:
     python hooks.py <mode>     # mode: pre_tool | post_tool | stop | ...
@@ -392,13 +393,14 @@ def handle_stop():
     """
     Stop: Agent 会话结束。
     
-    灯光: "idle" (🟦 冰蓝常亮)
-    含义: Claude 完成了所有工作，等待下一次 Prompt。
+    灯光: "success" (🟩 翠绿常亮)
+    含义: Claude 完成了所有工作，任务成功结束。
+          与 Pi Agent 的 agent_end → success 对齐。
     
     注意: 使用 send_direct 而非 send_state，因为 Stop 是最终状态，
           不需要经过多实例协调。
     """
-    send_direct("idle")
+    send_direct("success")
 
     # 可选: 完全关闭 relay 释放连接
     # stop_relay()

@@ -57,7 +57,7 @@ Claude Code hooks → hooks.py → HTTP → relay 守护进程(9877) → 持久 
 - `PostToolUse` → 成功继续工作 / 检测错误 (🟥 error)
 - `SubagentStop` → 子任务结束，恢复工作状态
 - `Notification` → 保持 relay 活跃，不改变状态
-- `Stop` → 会话结束，恢复空闲待命 (🟦 idle)
+- `Stop` → 会话结束，任务完成 (🟩 success)
 
 relay 守护进程保持**单一 TCP 连接**到灯泡，所有状态变化通过 HTTP 瞬时完成。
 
@@ -148,9 +148,10 @@ python hooks.py direct stop       # 终止灯效
 | `PostToolUse` | 出错 | 🟥 正红 常亮 (error) | 工具执行失败 |
 | `SubagentStop` | — | 🟦 蓝 呼吸 (thinking) | 子任务完成，继续 |
 | `Notification` | — | (保持当前状态) | 系统通知，不改变灯光 |
-| `Stop` | — | 🟦 冰蓝 常亮 (idle) | 会话结束，待命 |
+| `Stop` | — | 🟩 翠绿 常亮 (success) | 会话成功结束，任务完成 |
 
 > **设计原则**: "thinking" = Claude 在工作（你等着），"waiting" = Claude 在等你操作（快响应）。
+> 状态映射与 Pi Agent 版对齐：相同语义 → 相同灯光，切换 agent 不困惑。
 
 完整状态列表：
 
