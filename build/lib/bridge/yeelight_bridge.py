@@ -42,7 +42,7 @@ RELAY_URL = f"http://127.0.0.1:{RELAY_PORT}"
 # ═══════════════ 工具函数 ═══════════════
 
 def find_python():
-    """查找可用的 Python (需安装 yeelight 包)。跨平台兼容。"""
+    """查找可用的 Python (需安装 yeelight 包)"""
     def has_yeelight(cmd):
         try:
             r = subprocess.run([cmd, "-c", "import yeelight"], capture_output=True, timeout=5)
@@ -55,19 +55,11 @@ def find_python():
     for cmd in ["python3", "python"]:
         if has_yeelight(cmd):
             return cmd
-
-    # 平台特定回退路径
-    if sys.platform == "win32":
-        fallbacks = [
-            os.path.expanduser("~\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"),
-            "C:\\Python312\\python.exe",
-        ]
-    else:
-        fallbacks = [
-            "/usr/bin/python3", "/usr/local/bin/python3",
-            "/opt/homebrew/bin/python3",  # macOS Homebrew (Apple Silicon)
-            "/usr/local/opt/python3/bin/python3",  # macOS Homebrew (Intel)
-        ]
+    fallbacks = [
+        os.path.expanduser("~\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"),
+        "C:\\Python312\\python.exe",
+        "/usr/bin/python3", "/usr/local/bin/python3",
+    ]
     for p in fallbacks:
         if os.path.exists(p) and has_yeelight(p):
             return p

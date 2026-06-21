@@ -1,0 +1,2 @@
+[console_scripts]
+yeelight-bridge = bridge.yeelight_bridge:main

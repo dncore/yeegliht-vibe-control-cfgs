@@ -86,13 +86,8 @@ def _cleanup():
         except Exception:
             pass
 
-# Graceful cleanup on termination signals (Unix/macOS)
-# On Windows, atexit handles cleanup; SIGTERM exists but is not delivered by OS
-try:
-    signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
-    signal.signal(signal.SIGINT,  lambda *_: (_cleanup(), sys.exit(0)))
-except (AttributeError, ValueError):
-    pass  # Some embedded Python builds lack signal support
+signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
+signal.signal(signal.SIGINT,  lambda *_: (_cleanup(), sys.exit(0)))
 
 def _get_bulb(ip: str, reconnect: bool = False):
     global _persistent_bulb, _persistent_ip

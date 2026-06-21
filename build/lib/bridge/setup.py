@@ -37,17 +37,7 @@ def get_primary_subnet():
                     gw = parts[2]
                     if any(gw.startswith(p) for p in ("192.168.", "10.")):
                         return gw.rsplit(".", 1)[0] + "."
-        elif sys.platform == "darwin":
-            # macOS: use route get default
-            result = subprocess.run(["route", "-n", "get", "default"],
-                                    capture_output=True, text=True, timeout=5)
-            for line in result.stdout.splitlines():
-                if "gateway:" in line:
-                    gw = line.split(":")[-1].strip()
-                    if any(gw.startswith(p) for p in ("192.168.", "10.")):
-                        return gw.rsplit(".", 1)[0] + "."
         else:
-            # Linux: use ip route
             result = subprocess.run(["ip", "route", "show", "default"],
                                     capture_output=True, text=True, timeout=5)
             for line in result.stdout.splitlines():
