@@ -27,7 +27,7 @@
 🟩 green breathe  → querying context
 🟧 amber solid   → waiting for you
 🟥 red solid     → error
-🟩 green solid   → task done
+⬜ warm white    → task done
 ```
 
 ## Architecture
@@ -159,7 +159,7 @@ All agents map **same semantic events to same light effects**.
 | Fetching web | 🟦 blue flash | (0,100,255) |
 | Querying context | 🟩 green breathe | (0,160,100) |
 | Error | 🟥 red solid | (255,30,30) |
-| Task done | 🟩 green solid | (0,220,80) |
+| Task done | ⬜ warm white solid | (255,240,230) bri=30% |
 
 ## Project Structure
 
