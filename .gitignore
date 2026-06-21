@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 relay.pid
 *.pid
+build/
+*.egg-info/
+dist/
+*.whl
