@@ -34,8 +34,8 @@
 
 ```
                       ┌─────────────────────────────────┐
-                      │  ~/.yeelight-vibe-bridge/        │  ← 公共桥接层
-                      │  ├── yeelight_relay.py           │     (独立安装)
+                      │  ~/.yeelight-vibe-bridge/        │  ← bridge core
+                      │  ├── yeelight_relay.py           │     (install once)
                       │  ├── yeelight_bridge.py          │
                       │  ├── yeelight_discover.py        │
                       │  └── bulbs.json                  │
@@ -44,8 +44,8 @@
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
               ┌──────────┐ ┌──────────┐ ┌──────────┐
-              │ Claude   │ │ Pi Agent │ │  (future │  ← 可选适配器
-              │ Code     │ │          │ │  agents) │     (各自安装)
+              │ Claude   │ │ Pi Agent │ │  (future │  ← adapters
+              │ Code     │ │          │ │  agents) │     (optional)
               └──────────┘ └──────────┘ └──────────┘
 ```
 
@@ -53,8 +53,8 @@
 
 | Layer | Role | Location |
 |-------|------|----------|
-| **Bridge** (公共核心) | Relay 守护进程、灯泡发现、多 session 协调、HTTP API | `~/.yeelight-vibe-bridge/` |
-| **Adapters** (智能体适配器) | 极薄的事件翻译层：agent 事件 → HTTP → bridge | 各 agent 配置目录 |
+| **Bridge** (core platform) | Relay daemon, bulb discovery, multi-session coordination, HTTP API | `~/.yeelight-vibe-bridge/` |
+| **Adapters** (agent plugins) | Thin translation layer: agent events → HTTP → bridge | Per-agent config dirs |
 
 ### Key Features
 
@@ -128,22 +128,22 @@ yeelight-vibe-bridge/
 ├── README.md
 ├── README.zh-CN.md
 │
-├── bridge/                         ← 公共桥接层（必须先安装）
-│   ├── yeelight_relay.py           # HTTP relay 守护进程
-│   ├── yeelight_discover.py        # 局域网设备发现
-│   ├── yeelight_bridge.py          # bridge 管理 CLI
-│   ├── setup.py                    # bridge 一键安装向导
-│   └── bulbs.json                  # 灯泡配置模板
+├── bridge/                         ← core platform (install first)
+│   ├── yeelight_relay.py           # HTTP relay daemon
+│   ├── yeelight_discover.py        # LAN device discovery
+│   ├── yeelight_bridge.py          # bridge management CLI
+│   ├── setup.py                    # one-click installer
+│   └── bulbs.json                  # bulb config template
 │
-└── adapters/                       ← 智能体适配器（可选、可扩展）
+└── adapters/                       ← agent adapters (optional, extensible)
     ├── claude-code/
-    │   ├── hooks.py                # Claude Code hook → HTTP (极薄)
-    │   ├── settings.json           # hook 配置模板
-    │   ├── setup.py                # Claude Code 适配器安装
+    │   ├── hooks.py                # Claude Code hook → HTTP (thin)
+    │   ├── settings.json           # hook config template
+    │   ├── setup.py                # Claude Code adapter installer
     │   └── README.md
     │
     └── pi-agent/
-        ├── index.ts                # Pi Agent 扩展 → HTTP (极薄)
+        ├── index.ts                # Pi Agent extension → HTTP (thin)
         └── README.md
 ```
 
