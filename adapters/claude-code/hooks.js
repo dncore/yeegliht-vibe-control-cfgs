@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 /**
  * Yeelight Vibe Bridge — Claude Code adapter (Node.js)
- * Much faster startup than Python on Windows (~100ms vs ~1.5s)
  */
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const http = require("http");
 const BRIDGE = "http://127.0.0.1:9877";
+const LOG = path.join(os.homedir(), ".yeelight-vibe-bridge", "hook-debug.log");
 const READ_TOOLS = new Set(["Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"]);
 const WRITE_TOOLS = new Set(["Write","Edit","NotebookEdit"]);
 const WEB_TOOLS = new Set(["WebSearch","WebFetch"]);
 const WEB_KW = ["curl","wget","http ","fetch","npx ","npm ","pip "];
 
+function log(msg) {
+  try { fs.appendFileSync(LOG, new Date().toISOString() + " " + msg + "\n"); } catch(_) {}
+}
+
 function post(path, data) {
+  log("POST " + path + " " + JSON.stringify(data));
   try {
-    require("http").request(`${BRIDGE}${path}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      timeout: 300
+    http.request(BRIDGE + path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, timeout: 300
     }).end(JSON.stringify(data));
   } catch (_) {}
 }
@@ -56,8 +64,9 @@ function toolState(name, input) {
 async function main() {
   const mode = process.argv[2]?.toLowerCase();
   if (!mode) return;
-
   const base = { pid: "claude-hook" };
+
+  log("=== " + mode + " ===");
 
   switch (mode) {
     case "user_prompt":
@@ -65,12 +74,18 @@ async function main() {
       break;
     case "pre_tool": {
       const ev = await readStdin();
-      if (!ev) { post("/api/state", { ...base, state: "thinking" }); break; }
-      const perm = ev.permissionDecision || ev.permission_decision || "";
-      if (perm === "ask") { post("/api/state", { ...base, state: "waiting" }); break; }
+      if (!ev) { log("  ev=null → thinking"); post("/api/state", { ...base, state: "thinking" }); break; }
+      log("  ev=" + JSON.stringify(ev).slice(0, 200));
+      // Check ALL possible permission field names
+      const perm = ev.permissionDecision || ev.permission_decision
+                || ev.permission || ev.decision || ev.permissionDecision2 || "";
+      log("  perm=" + (perm || "(none)"));
+      if (perm === "ask") { log("  → waiting"); post("/api/state", { ...base, state: "waiting" }); break; }
       const tn = ev.tool_name || ev.toolName || "";
       const ti = ev.tool_input || ev.toolInput || {};
-      post("/api/state", { ...base, state: toolState(tn, ti) });
+      const st = toolState(tn, ti);
+      log("  tool=" + tn + " → " + st);
+      post("/api/state", { ...base, state: st });
       break;
     }
     case "post_tool": {
@@ -88,7 +103,6 @@ async function main() {
       post("/api/state", { ...base, state: "thinking" });
       break;
     case "notification":
-      // no-op; relay auto-expires stale sessions
       break;
   }
 }
