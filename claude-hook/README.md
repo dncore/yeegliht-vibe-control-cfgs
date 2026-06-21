@@ -127,6 +127,7 @@ python hooks.py direct stop       # 终止灯效
 | Claude Code 事件 | 工具 | 灯光状态 |
 |-----------------|------|---------|
 | UserPromptSubmit | — | 🟡 琥珀 等待用户 |
+| PreToolUse | 需授权 (Do you want to proceed?) | 🟡 琥珀 等待用户 |
 | PreToolUse | Bash (命令执行) | ⚙️ 橙 呼吸 |
 | PreToolUse | Bash (curl/wget等) | 🌐 蓝 闪烁 |
 | PreToolUse | Read / Grep / Glob | 📖 青 呼吸 |

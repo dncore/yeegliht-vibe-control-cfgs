@@ -289,6 +289,17 @@ def handle_pre_tool():
         send_state("thinking")
         return
 
+    # 当工具需要用户授权时 (permissionDecision == "ask")，
+    # Claude Code 会弹出 "Do you want to proceed?" 对话框等待用户响应。
+    # 此时应显示 "等待用户" 而非工具状态。
+    permission = (
+        event.get("permissionDecision")
+        or event.get("permission_decision", "")
+    )
+    if permission == "ask":
+        send_state("waiting")
+        return
+
     tool_name = event.get("tool_name", event.get("toolName", ""))
     tool_input = event.get("tool_input", event.get("toolInput", {}))
     state = tool_to_state(tool_name, tool_input)
