@@ -81,21 +81,69 @@
 ## Quick Start
 
 ```bash
-# 1. Install bridge (one command)
+# 1. Install bridge
 pip install .
 yeelight-bridge setup
-# Interactive: discovers bulbs → saves config → installs to ~/.yeelight-vibe-bridge/
+# Interactive wizard: discovers bulbs → saves config → installs to ~/.yeelight-vibe-bridge/
 
-# 2. Install adapter for your agent
+# 2. Start relay
+yeelight-bridge start
 
-# Claude Code:
-yeelight-bridge adapter claude-code
-# Restart Claude Code to apply
-
-# Pi Agent:
-yeelight-bridge adapter pi-agent  # shows instructions
-# Or: cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
+# 3. Install adapter for your agent
+yeelight-bridge adapter claude-code      # Claude Code: restart to apply
+yeelight-bridge adapter pi-agent         # Pi Agent: shows copy instructions
 ```
+
+## CLI Reference
+
+All commands via `yeelight-bridge <command> [args...]`.
+
+### Setup & Management
+
+| Command | Description |
+|---------|-------------|
+| `setup` | Full setup wizard: discover bulbs, save config, install bridge |
+| `install` | Install bridge files to `~/.yeelight-vibe-bridge/` only |
+| `adapter <name>` | Install agent adapter (`claude-code` / `pi-agent`) |
+
+### Relay Lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `start [ip]` | Start relay daemon (auto-detects bulb from config) |
+| `stop` | Gracefully stop relay and restore bulb to warm white |
+| `status` | Show relay health, bulb connection, active sessions, strategy |
+
+### Bulb Discovery & Config
+
+| Command | Description |
+|---------|-------------|
+| `discover` | Scan LAN for Yeelight bulbs (SSDP + TCP scan + reverse DNS) |
+| `setup-bulbs` | Interactive menu: add, remove, rename bulbs, set default |
+| `test <state> [ip]` | Send a light state directly to the bulb for testing |
+
+### Coordination
+
+| Command | Description |
+|---------|-------------|
+| `strategy <name>` | Switch coordination strategy: `priority`, `active`, or `carousel` |
+
+### Discovery Output
+
+```
+$ yeelight-bridge discover
+
+  ✅ Found 1 device:
+    1. yeelink-light-color8_mibt2EF1.lan (192.168.2.205) [yeelink.light.color8]
+```
+
+Device names are resolved via:
+1. SSDP broadcast name
+2. Bulb `get_properties()` name
+3. **Reverse DNS** hostname (e.g. `yeelink-light-color8_mibt2EF1.lan`)
+4. Fallback: `Yeelight-{ip}`
+
+Model is extracted from SSDP, `get_properties()`, or hostname pattern matching.
 
 ## State Color Reference
 
@@ -130,7 +178,8 @@ yeelight-vibe-bridge/
 │
 └── adapters/                       ← agent adapters (optional, extensible)
     ├── claude-code/
-    │   ├── hooks.py                # Claude Code hook → HTTP (thin)
+    │   ├── hooks.py                # Claude Code hook → HTTP (Python)
+    │   ├── hooks.js                # Claude Code hook → HTTP (Node.js, faster)
     │   ├── settings.json           # hook config template
     │   ├── setup.py                # Claude Code adapter installer
     │   └── README.md
@@ -147,19 +196,23 @@ yeelight-vibe-bridge/
 - **Multi-instance safe**: relay has built-in priority coordination. Multiple sessions/agents don't conflict — higher-priority state wins (error > executing > writing > reading > thinking > waiting > idle)
 - **Bridge lifetime**: relay daemon stays alive across sessions. No session "owns" it. Stale entries expire after 30s.
 - **Extensible**: to add a new agent, just write a thin adapter (~100 lines) that maps its events to HTTP calls
+- **Cross-platform**: tested on Windows, macOS, and Linux. Platform-specific code paths for process management, network discovery, and Python detection
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | Can't discover bulb | Check LAN Control is enabled in Yeelight App |
-| Bulb not responding | Verify the IP; power-cycle the bulb |
-| `ModuleNotFoundError: yeelight` | `pip install yeelight` |
+| Bulb not responding | Verify the IP; restart bulb and relay: `yeelight-bridge stop && yeelight-bridge start` |
+| `ModuleNotFoundError: yeelight` | `pip install yeelight` in the Python used by the relay |
 | Hooks not firing | Check `~/.claude/settings.json`; restart Claude Code |
-| Bridge relay not running | `python ~/.yeelight-vibe-bridge/yeelight_bridge.py start` |
-| Pi Agent bridge unreachable | Run bridge setup first: `python bridge/setup.py` |
-| Claude Code TUI freeze | Hooks use readline() with timeout; should not freeze |
-| Multiple agents clashing | All sessions use same relay on port 9877; priority aggregation handles it |
+| `yeelight-bridge` command not found | Re-run `pip install .` to rebuild the entry point |
+| Discover shows wrong/old name | Restart relay after bulb rename: `yeelight-bridge stop && yeelight-bridge start` |
+| Discover times out | Kill zombie relay processes and restart: `yeelight-bridge stop && yeelight-bridge start` |
+| Multiple relay processes (Windows) | `yeelight-bridge stop` kills one; use `python -c "import subprocess; ..."` to kill all on port 9877 |
+| Bulb model shows "unknown" | Bulb firmware doesn't report model via `get_properties()`; model extracted from DNS hostname if available |
+| Claude Code hook takes seconds | Node.js adapter is fastest (~150ms); ensure hooks.js is used, not hooks.py |
+| Light doesn't change on permission dialog | Claude Code doesn't send hook events for permission dialogs; light shows tool state (e.g. orange breathe for executing) |
 
 ## License
 

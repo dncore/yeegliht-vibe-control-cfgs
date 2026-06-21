@@ -77,19 +77,69 @@
 ## 快速开始
 
 ```bash
-# 1. 安装 bridge（一条命令）
+# 1. 安装 bridge
 pip install .
 yeelight-bridge setup
-# 交互式: 发现灯泡 → 保存配置 → 安装到 ~/.yeelight-vibe-bridge/
+# 交互式向导: 发现灯泡 → 保存配置 → 安装到 ~/.yeelight-vibe-bridge/
 
-# 2. 安装智能体适配器
+# 2. 启动 relay
+yeelight-bridge start
 
-# Claude Code:
-yeelight-bridge adapter claude-code
-# 重启 Claude Code 生效
+# 3. 安装智能体适配器
+yeelight-bridge adapter claude-code      # Claude Code: 重启生效
+yeelight-bridge adapter pi-agent         # Pi Agent: 显示复制说明
+```
 
-# Pi Agent:
-yeelight-bridge adapter pi-agent  # 显示安装说明
+## CLI 命令参考
+
+所有命令: `yeelight-bridge <命令> [参数...]`
+
+### 安装与管理
+
+| 命令 | 说明 |
+|------|------|
+| `setup` | 完整安装向导: 发现灯泡、保存配置、安装 bridge |
+| `install` | 仅安装 bridge 文件到 `~/.yeelight-vibe-bridge/` |
+| `adapter <名称>` | 安装智能体适配器 (`claude-code` / `pi-agent`) |
+
+### Relay 生命周期
+
+| 命令 | 说明 |
+|------|------|
+| `start [ip]` | 启动 relay 守护进程（自动从配置读取灯泡 IP） |
+| `stop` | 优雅停止 relay，恢复灯泡为暖白光 |
+| `status` | 查看 relay 健康、灯泡连接、活跃会话、协调策略 |
+
+### 灯泡发现与配置
+
+| 命令 | 说明 |
+|------|------|
+| `discover` | 扫描局域网 Yeelight 设备（SSDP + TCP 扫描 + 反向 DNS） |
+| `setup-bulbs` | 交互式菜单: 添加、删除、重命名灯泡，设置默认 |
+| `test <状态> [ip]` | 直接发送灯光状态测试 |
+
+### 协调策略
+
+| 命令 | 说明 |
+|------|------|
+| `strategy <名称>` | 切换协调策略: `priority`（优先级）、`active`（活跃优先）、`carousel`（分组轮播） |
+
+### 发现输出示例
+
+```
+$ yeelight-bridge discover
+
+  ✅ 发现 1 个设备:
+    1. yeelink-light-color8_mibt2EF1.lan (192.168.2.205) [yeelink.light.color8]
+```
+
+设备名称获取优先级:
+1. SSDP 广播名称
+2. 灯泡 `get_properties()` 返回的名称
+3. **反向 DNS** 主机名（如 `yeelink-light-color8_mibt2EF1.lan`）
+4. 兜底: `Yeelight-{ip}`
+
+型号从 SSDP、`get_properties()` 或主机名正则匹配获取。
 # 或: cp -r adapters/pi-agent ~/.pi/agent/extensions/yeelight-vibe
 ```
 
@@ -117,22 +167,23 @@ yeelight-vibe-bridge/
 ├── README.md
 ├── README.zh-CN.md
 │
-├── bridge/                         ← 公共桥接层（必须先安装）
+├── bridge/                         ← 公共桥接层 (先安装)
 │   ├── yeelight_relay.py           # HTTP relay 守护进程
 │   ├── yeelight_discover.py        # 局域网设备发现
 │   ├── yeelight_bridge.py          # bridge 管理 CLI
-│   ├── setup.py                    # bridge 一键安装向导
+│   ├── setup.py                    # 一键安装向导
 │   └── bulbs.json                  # 灯泡配置模板
 │
-└── adapters/                       ← 智能体适配器（可选、可扩展）
+└── adapters/                       ← 智能体适配器 (可选、可扩展)
     ├── claude-code/
-    │   ├── hooks.py                # Claude Code hook → HTTP (极薄)
+    │   ├── hooks.py                # Claude Code hook → HTTP (薄适配器)
+    │   ├── hooks.js                # Node.js 版 (启动更快)
     │   ├── settings.json           # hook 配置模板
     │   ├── setup.py                # Claude Code 适配器安装
     │   └── README.md
     │
     └── pi-agent/
-        ├── index.ts                # Pi Agent 扩展 → HTTP (极薄)
+        ├── index.ts                # Pi Agent 扩展 → HTTP (薄适配器)
         └── README.md
 ```
 
@@ -143,19 +194,23 @@ yeelight-vibe-bridge/
 - **多实例安全**：relay 内置优先级协调。多个 session/agent 不冲突 — 高优先级状态胜出（error > executing > writing > reading > thinking > waiting > idle）
 - **生命周期**：relay 守护进程跨 session 存活，无 session 独占。过期条目 30 秒自动淘汰
 - **可扩展**：添加新智能体只需写一个 ~100 行的薄适配器，映射事件到 HTTP 调用
+- **跨平台**：支持 Windows、macOS、Linux。进程管理、网络发现、Python 检测均有平台特定适配
 
 ## 故障排除
 
 | 问题 | 解决方案 |
 |------|---------|
 | 无法发现灯泡 | 检查 Yeelight App 中是否开启局域网控制 |
-| 灯泡不响应 | 确认 IP 正确；重启灯泡 |
-| `ModuleNotFoundError: yeelight` | `pip install yeelight` |
+| 灯泡不响应 | 确认 IP；重启灯泡和 relay: `yeelight-bridge stop && yeelight-bridge start` |
+| `ModuleNotFoundError: yeelight` | `pip install yeelight`（需在 relay 使用的 Python 中安装） |
 | Hooks 不触发 | 检查 `~/.claude/settings.json`；重启 Claude Code |
-| Bridge relay 未运行 | `python ~/.yeelight-vibe-bridge/yeelight_bridge.py start` |
-| Pi Agent 连不上 bridge | 先安装 bridge: `python bridge/setup.py` |
-| Claude Code TUI 冻结 | hooks 使用 readline() + 超时，不会冻结 |
-| 多个 agent 抢灯 | 所有 session 走同一 relay 端口 9877；优先级聚合处理 |
+| `yeelight-bridge` 命令找不到 | 重新运行 `pip install .` 重建入口点 |
+| Discover 显示旧名称 | 灯泡改名后重启 relay: `yeelight-bridge stop && yeelight-bridge start` |
+| Discover 超时 | 杀掉僵尸 relay 进程后重启: `yeelight-bridge stop && yeelight-bridge start` |
+| 多个 relay 进程 (Windows) | `yeelight-bridge stop` 只杀一个；需手动杀端口 9877 上所有进程 |
+| 灯泡型号显示 "unknown" | 灯泡固件不返回型号；可通过 DNS 主机名推断 |
+| Claude Code hook 延迟数秒 | Node.js 版适配器最快 (~150ms)；确保用的 hooks.js |
+| 确认对话框时灯不变 | Claude Code 不发送权限确认的 hook 事件；灯显示工具状态（如橙色呼吸） |
 
 ## 许可证
 
