@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import time
+import threading
 import subprocess
 import signal
 from pathlib import Path
@@ -280,11 +281,35 @@ def handle_user_prompt():
 
 
 def _read_event():
-    """从 stdin 读取 Claude Code 传入的 JSON 事件，失败返回 None"""
-    try:
-        return json.loads(sys.stdin.read())
-    except Exception:
+    """
+    从 stdin 读取 Claude Code 传入的 JSON 事件。
+    
+    防御策略:
+      1. isatty() 检查: 如果 stdin 是交互终端（非管道），不可能有数据
+      2. 超时保护: 用独立线程读取，超时 2 秒自动放弃
+      
+    sys.stdin.read() 是阻塞调用 — 如果 Claude Code 没有向管道写数据，
+    会永久卡住，导致 Claude Code TUI 冻结。这个函数用线程超时规避此问题。
+    """
+    # stdin 是终端 = 没有管道数据（Claude Code 不会以 TTY 方式传事件）
+    if sys.stdin.isatty():
         return None
+    
+    # 带超时的线程读取 — 防止 stdin.read() 永久阻塞
+    result = [None]
+    def _do_read():
+        try:
+            raw = sys.stdin.read()
+            if raw and raw.strip():
+                result[0] = json.loads(raw)
+        except Exception:
+            pass
+    
+    t = threading.Thread(target=_do_read, daemon=True)
+    t.start()
+    t.join(2)  # 最多等 2 秒
+    
+    return result[0]
 
 
 def handle_pre_tool():
@@ -367,21 +392,12 @@ def handle_stop():
     """
     Stop: Agent 会话结束。
     
-    灯光: "idle" (💤 冰蓝常亮)
+    灯光: "idle" (🟦 冰蓝常亮)
     含义: Claude 完成了所有工作，等待下一次 Prompt。
-    
-    stopReason 处理:
-      - "end_turn"        → idle (正常完成)
-      - "max_turns"       → idle (达到上限)
-      - 其他/错误相关     → idle (会话结束，恢复待命)
     
     注意: 使用 send_direct 而非 send_state，因为 Stop 是最终状态，
           不需要经过多实例协调。
     """
-    # 读取 Stop 事件数据（可选，用于未来扩展）
-    event = _read_event()
-
-    # 最终状态: idle
     send_direct("idle")
 
     # 可选: 完全关闭 relay 释放连接
