@@ -424,14 +424,34 @@ class RelayHandler(BaseHTTPRequestHandler):
                                 result.append(r)
 
                 # 3. 用 relay 已有的持久连接查询型号（避免冲突）
+                #    同时尝试反向 DNS 解析主机名
                 for entry in result:
-                    if entry.get("model") == "unknown" and entry.get("ip") == self.bulb_ip:
+                    ip = entry.get("ip", "")
+                    # 尝试反向 DNS 获取主机名（短超时，避免阻塞）
+                    if not entry.get("name") or entry.get("name","").startswith("Yeelight-"):
+                        try:
+                            host = socket.gethostbyaddr(ip)
+                            if host and host[0]:
+                                entry["name"] = host[0]
+                                # 从主机名提取型号: yeelink-light-color8_mibt2EF1 → color8
+                                if entry.get("model") == "unknown" and "yeelink" in host[0].lower():
+                                    import re
+                                    m = re.search(r'yeelink-light-([a-z0-9]+)', host[0].lower())
+                                    if m:
+                                        entry["model"] = f"yeelink.light.{m.group(1)}"
+                        except Exception:
+                            pass
+                    # 用持久连接查询型号
+                    if entry.get("model") == "unknown" and ip == self.bulb_ip:
                         try:
                             bulb = _get_bulb(self.bulb_ip)
                             props = bulb.get_properties()
                             if props:
                                 entry["model"] = props.get("model", "unknown")
-                                entry["name"] = props.get("name", entry.get("name", ""))
+                                # props 返回的 name 优先于 DNS
+                                prop_name = props.get("name")
+                                if prop_name:
+                                    entry["name"] = prop_name
                         except Exception:
                             pass
 
