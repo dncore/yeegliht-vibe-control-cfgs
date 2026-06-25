@@ -94,6 +94,26 @@ yeelight-bridge adapter claude-code      # Claude Code: restart to apply
 yeelight-bridge adapter pi-agent         # Pi Agent: shows copy instructions
 ```
 
+### Arch Linux / PEP 668
+
+Arch Linux enforces [PEP 668](https://peps.python.org/pep-0668/) — direct `pip install` is blocked. Use one of:
+
+**Option 1: pipx (recommended for CLI tools)**
+```bash
+sudo pacman -S python-pipx          # install pipx if needed
+pipx ensurepath                     # add ~/.local/bin to PATH
+pipx install .                      # install yeelight-vibe-bridge
+```
+
+**Option 2: venv + symlink**
+```bash
+python -m venv .venv
+.venv/bin/pip install .
+ln -sf "$(pwd)/.venv/bin/yeelight-bridge" ~/.local/bin/yeelight-bridge
+```
+
+Then proceed with `yeelight-bridge setup` as normal.
+
 ## CLI Reference
 
 All commands via `yeelight-bridge <command> [args...]`.
@@ -207,6 +227,7 @@ yeelight-vibe-bridge/
 | `ModuleNotFoundError: yeelight` | `pip install yeelight` in the Python used by the relay |
 | Hooks not firing | Check `~/.claude/settings.json`; restart Claude Code |
 | `yeelight-bridge` command not found | Re-run `pip install .` to rebuild the entry point |
+| `externally-managed-environment` (Arch) | Use `pipx install .` or a venv — see [Arch Linux](#arch-linux--pep-668) section |
 | Discover shows wrong/old name | Restart relay after bulb rename: `yeelight-bridge stop && yeelight-bridge start` |
 | Discover times out | Kill zombie relay processes and restart: `yeelight-bridge stop && yeelight-bridge start` |
 | Multiple relay processes (Windows) | `yeelight-bridge stop` kills one; use `python -c "import subprocess; ..."` to kill all on port 9877 |

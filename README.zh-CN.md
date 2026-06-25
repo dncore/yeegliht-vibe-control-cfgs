@@ -90,6 +90,26 @@ yeelight-bridge adapter claude-code      # Claude Code: 重启生效
 yeelight-bridge adapter pi-agent         # Pi Agent: 显示复制说明
 ```
 
+### Arch Linux / PEP 668
+
+Arch Linux 强制执行 [PEP 668](https://peps.python.org/pep-0668/)，直接 `pip install` 会被阻止。选用以下方式之一：
+
+**方式一：pipx（推荐 CLI 工具首选）**
+```bash
+sudo pacman -S python-pipx          # 安装 pipx（如未安装）
+pipx ensurepath                     # 将 ~/.local/bin 加入 PATH
+pipx install .                      # 安装 yeelight-vibe-bridge
+```
+
+**方式二：venv + 符号链接**
+```bash
+python -m venv .venv
+.venv/bin/pip install .
+ln -sf "$(pwd)/.venv/bin/yeelight-bridge" ~/.local/bin/yeelight-bridge
+```
+
+然后正常执行 `yeelight-bridge setup`。
+
 ## CLI 命令参考
 
 所有命令: `yeelight-bridge <命令> [参数...]`
@@ -205,6 +225,7 @@ yeelight-vibe-bridge/
 | `ModuleNotFoundError: yeelight` | `pip install yeelight`（需在 relay 使用的 Python 中安装） |
 | Hooks 不触发 | 检查 `~/.claude/settings.json`；重启 Claude Code |
 | `yeelight-bridge` 命令找不到 | 重新运行 `pip install .` 重建入口点 |
+| `externally-managed-environment` (Arch) | 用 `pipx install .` 或虚拟环境安装 — 见 [Arch Linux](#arch-linux--pep-668) 章节 |
 | Discover 显示旧名称 | 灯泡改名后重启 relay: `yeelight-bridge stop && yeelight-bridge start` |
 | Discover 超时 | 杀掉僵尸 relay 进程后重启: `yeelight-bridge stop && yeelight-bridge start` |
 | 多个 relay 进程 (Windows) | `yeelight-bridge stop` 只杀一个；需手动杀端口 9877 上所有进程 |
