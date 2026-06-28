@@ -26,6 +26,7 @@ import json
 import logging
 import socket
 import struct
+import threading
 import time
 from typing import Optional, List, Tuple
 
@@ -309,32 +310,31 @@ class CubeLiteController:
         return self.__class__._persistent_lock
 
     def _cube_send(self, cmd_dict: dict):
-        """Send one JSON command on the persistent socket, reconnect if needed."""
+        """Send one JSON command on persistent socket with reconnect."""
         import socket as _sock
 
-        try:
-            if self.__class__._persistent_sock is None:
-                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-                s.settimeout(3)
-                s.connect((self._ip, self._port))
-                self.__class__._persistent_sock = s
-
-            payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
-            self.__class__._persistent_sock.sendall(payload)
-        except (_sock.error, OSError, BrokenPipeError, ConnectionResetError, AttributeError):
-            # Reconnect
+        # Retry up to 2 times on connection errors
+        for attempt in range(2):
             try:
-                if self.__class__._persistent_sock is not None:
-                    self.__class__._persistent_sock.close()
-            except Exception:
-                pass
-            self.__class__._persistent_sock = None
-            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-            s.settimeout(3)
-            s.connect((self._ip, self._port))
-            payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
-            s.sendall(payload)
-            self.__class__._persistent_sock = s
+                if self.__class__._persistent_sock is None:
+                    s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                    s.settimeout(3)
+                    s.setsockopt(_sock.IPPROTO_TCP, _sock.TCP_NODELAY, 1)
+                    s.setsockopt(_sock.SOL_SOCKET, _sock.SO_LINGER, struct.pack('ii', 1, 0))
+                    s.connect((self._ip, self._port))
+                    self.__class__._persistent_sock = s
+
+                payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
+                self.__class__._persistent_sock.sendall(payload)
+                return  # success
+            except (_sock.error, OSError, BrokenPipeError, ConnectionResetError, AttributeError):
+                # Close stale socket
+                try:
+                    if self.__class__._persistent_sock is not None:
+                        self.__class__._persistent_sock.close()
+                except Exception:
+                    pass
+                self.__class__._persistent_sock = None
 
     def _cube_apply(self, state_name: str):
         """Synchronous state apply: activate FX → set bright → update LEDs."""
