@@ -199,12 +199,8 @@ class CubeLiteController:
 
     # ── Command Sending ───────────────────────────────────
 
-    async def _send_command(self, method: str, params: list) -> None:
-        """Send a JSON command over TCP with rate limiting. Fire-and-forget (no recv).
-
-        All commands are serialized through _command_lock to prevent concurrent
-        TCP connections which crash the Cube firmware.
-        """
+    async def _send_command(self, method: str, params: list, retry=False) -> None:
+        """Send a JSON command over TCP with rate limiting and reconnection."""
         async with self._get_lock():
             # Rate limiting
             elapsed = time.time() - self._last_command_time
@@ -225,7 +221,17 @@ class CubeLiteController:
             except (socket.error, OSError, BrokenPipeError, ConnectionResetError) as e:
                 logger.warning(f"[CubeLite] [{self._ip}] Send failed ({type(e).__name__}): {e}")
                 self._close_socket()
-                raise
+                if not retry:
+                    raise
+                # One reconnect attempt
+                try:
+                    await self._raw_connect()
+                    await self._activate_fx()
+                    await asyncio.to_thread(self._socket.sendall, request)
+                    self._last_command_time = time.time()
+                except Exception as e2:
+                    logger.warning(f"[CubeLite] [{self._ip}] Retry failed: {e2}")
+                    raise
 
     async def _activate_fx(self):
         """Enter direct FX mode + set brightness. Called on connect and periodically."""

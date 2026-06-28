@@ -500,17 +500,20 @@ class RelayHandler(BaseHTTPRequestHandler):
                 else:
                     s = _STATES.get(final)
                 label_text = s["label"] if s else final
-            self._send_json({"ok": True, "state": final, "label": label_text,
-                             "strategy": data.get("strategy","priority"),
-                             "sessions": len(data.get("sessions",{}))})
-            # 后台执行
             if final:
-                def _run():
-                    try:
-                        result = apply_state(final, self.bulb_ip)
-                    except Exception:
-                        pass
-                Thread(target=_run, daemon=True).start()
+                self._send_json({"ok": True, "state": final, "label": label_text,
+                                 "strategy": data.get("strategy","priority"),
+                                 "sessions": len(data.get("sessions",{}))})
+                # 后台执行 Cube Lite 状态（非阻塞 fire-and-forget）
+                if _is_cube_lite:
+                    _run_cube_state(final)
+                else:
+                    def _run():
+                        try:
+                            result = apply_state(final, self.bulb_ip)
+                        except Exception:
+                            pass
+                    Thread(target=_run, daemon=True).start()
 
         elif path == "/api/discover":
             try:
