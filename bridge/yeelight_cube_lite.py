@@ -27,13 +27,22 @@ import logging
 import socket
 import struct
 import time
+from typing import Optional, List, Tuple
 
-from .cube_fonts import TOTAL_COLUMNS, TOTAL_ROWS, TOTAL_PIXELS, layout_text_centered
-from .cube_patterns import (
-    STATE_DEFS,
-    STATE_ALIASES,
-    ANIMATION_CONFIG,
-)
+try:
+    from .cube_fonts import TOTAL_COLUMNS, TOTAL_ROWS, TOTAL_PIXELS, layout_text_centered
+    from .cube_patterns import (
+        STATE_DEFS,
+        STATE_ALIASES,
+        ANIMATION_CONFIG,
+    )
+except ImportError:
+    from cube_fonts import TOTAL_COLUMNS, TOTAL_ROWS, TOTAL_PIXELS, layout_text_centered
+    from cube_patterns import (
+        STATE_DEFS,
+        STATE_ALIASES,
+        ANIMATION_CONFIG,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -120,17 +129,23 @@ class CubeLiteController:
     def __init__(self, ip: str, port: int = CUBE_PORT):
         self._ip = ip
         self._port = port
-        self._socket: socket.socket | None = None
+        self._socket: Optional[socket.socket] = None
         self._last_command_time = 0.0
         self._fx_activated = False
         self._last_fx_time = 0.0
         self._hw_brightness = 50
-        self._command_lock = asyncio.Lock()
+        self._command_lock: Optional[asyncio.Lock] = None
 
         # Animation state
-        self._anim_task: asyncio.Task | None = None
-        self._current_state: str | None = None
-        self._current_pixels: list | None = None
+        self._anim_task: Optional[asyncio.Task] = None
+        self._current_state: Optional[str] = None
+        self._current_pixels: Optional[list] = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Lazily create the command lock (needs an event loop)."""
+        if self._command_lock is None:
+            self._command_lock = asyncio.Lock()
+        return self._command_lock
 
     # ── Connection Management ──────────────────────────────
 
@@ -190,7 +205,7 @@ class CubeLiteController:
         All commands are serialized through _command_lock to prevent concurrent
         TCP connections which crash the Cube firmware.
         """
-        async with self._command_lock:
+        async with self._get_lock():
             # Rate limiting
             elapsed = time.time() - self._last_command_time
             if elapsed < MIN_COMMAND_INTERVAL:
@@ -237,7 +252,7 @@ class CubeLiteController:
 
     # ── Pixel Rendering ───────────────────────────────────
 
-    async def send_pixels(self, pixels: list, brightness_pct: int | None = None):
+    async def send_pixels(self, pixels: list, brightness_pct: Optional[int] = None):
         """Encode and send a 100-pixel array to the Cube Lite.
 
         Args:

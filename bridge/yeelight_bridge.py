@@ -29,6 +29,13 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
+# ── Windows GBK terminal workaround ──────────────────────────
+if sys.platform == "win32" and sys.stdout.encoding and sys.stdout.encoding.lower() in ("gbk", "gb2312", "cp936"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # ═══════════════ 常量 ═══════════════
 
 SCRIPT_DIR = Path(__file__).parent.resolve()

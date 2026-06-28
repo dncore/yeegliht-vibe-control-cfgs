@@ -24,7 +24,7 @@ import os
 import signal
 import socket
 import sys
-import time
+import time as _time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock, Thread
 from urllib.parse import urlparse
@@ -123,24 +123,51 @@ except (AttributeError, ValueError):
 def _detect_device_type(ip: str) -> bool:
     """Detect if the device at IP is a Cube Smart Lamp Lite.
 
-    Returns True if Cube Lite detected, False for standard bulb.
-    Sets _is_cube_lite and initializes _cube_controller if detected.
+    Uses Cube Lite protocol directly: creates a CubeLiteController and attempts
+    TCP connect + activate_fx_mode. If the device responds, it's a Cube Lite.
+    The controller stays connected (avoids double-connect issue where Cube
+    firmware rejects new connections after a raw-socket probe).
+
+    Fallback: standard Bulb.get_properties() with model/name pattern matching.
     """
     global _is_cube_lite, _cube_controller
     if not _CUBE_AVAILABLE:
+        print("[relay] Cube support not available (zeroconf missing)")
         return False
 
+    # Method 1: Cube Lite protocol via CubeLiteController
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ctrl = CubeLiteController(ip)
+        ok = loop.run_until_complete(ctrl.connect())
+        loop.close()
+        if ok:
+            _is_cube_lite = True
+            _cube_controller = ctrl
+            print(f"[relay] Cube Lite detected (protocol match)")
+            return True
+        else:
+            print(f"[relay] Cube protocol probe returned False (not a Cube Lite)")
+    except Exception as e:
+        print(f"[relay] Cube protocol probe raised {type(e).__name__}: {e}")
+
+    # Method 2: Standard Yeelight get_properties
     try:
         bulb = Bulb(ip, auto_on=False, effect="sudden")
         props = bulb.get_properties()
         model = props.get("model", "")
         name = props.get("name", "")
+        print(f"[relay] get_properties result: model={model!r}, name={name!r}")
         if is_cube_device(model, name):
             _is_cube_lite = True
             _cube_controller = CubeLiteController(ip)
+            print(f"[relay] Cube Lite detected (model/name match)")
             return True
-    except Exception:
-        pass
+        else:
+            print(f"[relay] Not a Cube Lite (model={model!r}, name={name!r})")
+    except Exception as e:
+        print(f"[relay] get_properties probe raised {type(e).__name__}: {e}")
     return False
 
 def _get_bulb(ip: str, reconnect: bool = False):
@@ -712,17 +739,22 @@ def main():
     def _warmup():
         global _is_cube_lite, _cube_controller
         try:
-            # 检测是否为 Cube Lite
+            # 检测是否为 Cube Lite（检测成功时 controller 已连接）
             if _CUBE_AVAILABLE and _detect_device_type(bulb_ip):
-                print(f"[relay] 检测到 Cube Lite 设备, IP={bulb_ip}")
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                ok = loop.run_until_complete(_cube_controller.connect())
-                loop.close()
-                if ok:
-                    print(f"[relay] Cube Lite 已连接并激活 FX 模式")
+                # _detect_device_type Method 1 already connected the controller
+                # Method 2 fallback needs to connect now
+                if not _cube_controller or not _cube_controller._socket:
+                    print(f"[relay] 尝试连接 Cube Lite, IP={bulb_ip}")
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    ok = loop.run_until_complete(_cube_controller.connect())
+                    loop.close()
+                    if ok:
+                        print(f"[relay] Cube Lite 已连接并激活 FX 模式")
+                    else:
+                        print(f"[relay] ⚠ Cube Lite 连接失败，将在首次请求时重试")
                 else:
-                    print(f"[relay] ⚠ Cube Lite 连接失败，将在首次请求时重试")
+                    print(f"[relay] Cube Lite 已就绪, IP={bulb_ip}")
             else:
                 b = _get_bulb(bulb_ip)
                 b.turn_on()  # 真正触发 socket 连接
@@ -730,6 +762,7 @@ def main():
         except Exception:
             pass
     Thread(target=_warmup, daemon=True).start()
+    server = HTTPServer(("", port), RelayHandler)
     print(f"[relay] 端口 {port} 灯泡 {bulb_ip}")
     try:
         server.serve_forever()

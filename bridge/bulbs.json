@@ -1,4 +1,10 @@
 {
-  "default": "",
-  "bulbs": []
+  "default": "bulb_1921682131",
+  "bulbs": [
+    {
+      "id": "bulb_1921682131",
+      "name": "Yeelight Cube-192.168.2.131",
+      "ip": "192.168.2.131"
+    }
+  ]
 }
