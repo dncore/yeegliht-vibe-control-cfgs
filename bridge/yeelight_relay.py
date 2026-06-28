@@ -299,7 +299,7 @@ def aggregate(data):
     if not sessions:
         return None
     strategy = data.get("strategy", "priority")
-    now = time.time()
+    now = _time.time()
     for pid in list(sessions.keys()):
         if now - sessions[pid].get("updatedAt", 0) > STALE_TIMEOUT:
             del sessions[pid]
@@ -476,9 +476,9 @@ class RelayHandler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             raw = body.get("state", "").lower()
             state = _ALIASES.get(raw, raw)
-            pid = body.get("pid", f"remote_{int(time.time())}")
+            pid = body.get("pid", f"remote_{int(_time.time())}")
             data = read_shared()
-            data.setdefault("sessions", {})[pid] = {"state": state, "updatedAt": time.time()}
+            data.setdefault("sessions", {})[pid] = {"state": state, "updatedAt": _time.time()}
             write_shared(data)
             final = aggregate(data)
             label_text = ""
@@ -573,7 +573,6 @@ class RelayHandler(BaseHTTPRequestHandler):
                     browser = ServiceBrowser(
                         zc, "_miio._udp.local.", listener=listener,
                     )
-                    import time as _time
                     _time.sleep(2)  # wait for mDNS responses
                     zc.close()
                     for entry in listener.found:
