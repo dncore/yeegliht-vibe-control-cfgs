@@ -388,7 +388,7 @@ class CubeLiteController:
             except Exception as e:
                 logger.debug(f"[CubeLite] [{self._ip}] Animation stopped: {e}")
 
-        self._anim_task = asyncio.ensure_future(_anim_loop(), loop=loop)
+        self._anim_task = asyncio.ensure_future(_anim_loop(), loop=loop) if loop else asyncio.ensure_future(_anim_loop())
 
     def _stop_animation(self):
         """Cancel the running animation task."""
