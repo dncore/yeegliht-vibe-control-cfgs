@@ -273,26 +273,20 @@ def _apply_locked(bulb, state_name):
 
 
 def _run_cube_state(state_name):
-    """Dispatch state to Cube Lite via the persistent event loop."""
+    """Dispatch state to Cube Lite via synchronous TCP (no asyncio).
+
+    Cube protocol is fire-and-forget TCP commands. Async event loops
+    create serialization bottlenecks that drop rapid hook transitions.
+    Using a new TCP connection per dispatch is simpler and reliable.
+    """
     global _cube_controller, _cube_loop
-    if _cube_controller is None or _cube_loop is None:
+    if _cube_controller is None:
         return
 
-    async def _do_state():
-        try:
-            # Full cycle: ensure FX fresh → stop animations → apply new state
-            await _cube_controller._ensure_fx()
-            await _cube_controller.apply_state(state_name, _cube_loop)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-
     if state_name == "stop":
-        asyncio.run_coroutine_threadsafe(
-            _cube_controller.stop_effects(), _cube_loop
-        )
+        _cube_controller.stop_effects_sync()
     else:
-        asyncio.run_coroutine_threadsafe(_do_state(), _cube_loop)
+        _cube_controller.apply_state_sync(state_name)
 
 # ═══════════════ 多实例协调 ═══════════════
 
@@ -511,9 +505,11 @@ class RelayHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "state": final, "label": label_text,
                                  "strategy": data.get("strategy","priority"),
                                  "sessions": len(data.get("sessions",{}))})
-                # 后台执行 Cube Lite 状态
+                # 后台执行 Cube Lite 状态（每种状态都直接写入 Cube，不会丢失）
                 if _is_cube_lite and _cube_controller is not None:
-                    _run_cube_state(final)
+                    if _cube_loop and _cube_loop.is_running():
+                        # Use sync dispatch for reliability
+                        _run_cube_state(final)
                 elif not _is_cube_lite:
                     def _run():
                         try:

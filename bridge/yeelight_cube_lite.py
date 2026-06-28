@@ -293,7 +293,56 @@ class CubeLiteController:
         pixels = build_pixel_array(lit_indices, color, visual_brightness)
         await self.send_pixels(pixels, hw_brightness)
 
-    # ── State Application ─────────────────────────────────
+    def _sync_send(self, pixels: list, text: str = "", brightness: int = 50):
+        """Synchronous TCP send: open connection, activate FX, send pixels, close."""
+        import base64 as _b64
+
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            sock.connect((self._ip, self._port))
+
+            cmd = json.dumps({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
+            sock.sendall((cmd + "\r\n").encode("utf8"))
+            _time.sleep(0.05)
+
+            cmd = json.dumps({"id": 2, "method": "set_bright", "params": [brightness]})
+            sock.sendall((cmd + "\r\n").encode("utf8"))
+            _time.sleep(0.05)
+
+            rgb_data = encode_pixel_array(pixels)
+            cmd = json.dumps({"id": 3, "method": "update_leds", "params": [rgb_data]})
+            sock.sendall((cmd + "\r\n").encode("utf8"))
+        except Exception:
+            pass
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    # ── Synchronous direct entry point (called from relay) ──
+
+    def apply_state_sync(self, state_name: str):
+        """Apply state via direct TCP — called from relay thread."""
+        resolved = STATE_ALIASES.get(state_name, state_name)
+        state_def = STATE_DEFS.get(resolved)
+        if not state_def:
+            return
+
+        lit = layout_text_centered(state_def["text"]) if state_def["text"] else []
+        pixels = build_pixel_array(lit, state_def["rgb"], state_def["brightness"])
+        self._sync_send(pixels, state_def["text"], state_def["brightness"])
+
+    def stop_effects_sync(self):
+        """Turn off display via synchronous TCP."""
+        lit = layout_text_centered("") if False else []
+        pixels = build_pixel_array([], (0, 0, 0), 0)
+        self._sync_send(pixels, "", 0)
+
+    # ── Animation Engine (kept for backward compatibility) ──
 
     async def apply_state(self, state_name: str, loop: Optional[asyncio.AbstractEventLoop] = None):
         """Apply an AI agent state to the Cube Lite display.
