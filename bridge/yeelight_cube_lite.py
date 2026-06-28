@@ -294,95 +294,86 @@ class CubeLiteController:
         await self.send_pixels(pixels, hw_brightness)
 
     # ── Synchronous State Application ─────────────────
-    # Uses a persistent single TCP connection + thread-safe queue.
-    # Cube firmware CRASHES on concurrent TCP connections.
-    # Queue ensures rapid hook transitions (sub-second) don't get lost.
+    # Follows the same pattern as bulb's _get_bulb + _apply_locked:
+    #   - One persistent TCP socket, reused
+    #   - One lock serializes all commands
+    #   - Sync blocking, no background thread or asyncio
+    #   - Auto-reconnect on socket failure
 
-    import queue as _queue, threading as _threading
+    _persistent_sock: socket.socket = None
+    _persistent_lock = None  # created lazily
 
-    _sync_lock: _threading.Lock = None
-    _sync_sock: socket.socket = None
-    _sync_thread: _threading.Thread = None
-    _sync_queue: _queue.Queue = None
+    def _get_cube_lock(self):
+        if self.__class__._persistent_lock is None:
+            self.__class__._persistent_lock = _threading.Lock()
+        return self.__class__._persistent_lock
 
-    def _sync_init(self):
-        """Lazy init the sync dispatcher (single TCP connection + queue)."""
-        if self._sync_lock is not None:
-            return
-        self.__class__._sync_lock = _threading.Lock()
-        self.__class__._sync_queue = _queue.Queue(maxsize=1)
+    def _cube_send(self, cmd_dict: dict):
+        """Send one JSON command on the persistent socket, reconnect if needed."""
+        import socket as _sock
 
-        def _worker():
-            """Background worker: drain queue → send pixels."""
-            sock = None
-            while True:
-                item = self.__class__._sync_queue.get()
-                if item is None:
-                    break  # shutdown sentinel
-                pixels, brightness = item
-                try:
-                    # Reconnect on each item (Cube firmware hates persistent conn)
-                    if sock is not None:
-                        try:
-                            sock.close()
-                        except Exception:
-                            pass
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(3)
-                    sock.connect((self._ip, self._port))
+        try:
+            if self.__class__._persistent_sock is None:
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect((self._ip, self._port))
+                self.__class__._persistent_sock = s
 
-                    cmd = json.dumps({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
-                    sock.sendall((cmd + "\r\n").encode("utf8"))
-                    _time.sleep(0.05)
-
-                    cmd = json.dumps({"id": 2, "method": "set_bright", "params": [brightness]})
-                    sock.sendall((cmd + "\r\n").encode("utf8"))
-                    _time.sleep(0.05)
-                except Exception:
-                    continue
-
-                try:
-                    rgb_data = encode_pixel_array(pixels)
-                    cmd = json.dumps({"id": 3, "method": "update_leds", "params": [rgb_data]})
-                    sock.sendall((cmd + "\r\n").encode("utf8"))
-                except Exception:
-                    pass
-
-            if sock is not None:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
-
-        self.__class__._sync_thread = _threading.Thread(target=_worker, daemon=True)
-        self.__class__._sync_thread.start()
-
-    def _sync_send(self, pixels: list, text: str = "", brightness: int = 50):
-        """Enqueue pixels for the background worker thread (non-blocking)."""
-        self._sync_init()
-        with self.__class__._sync_lock:
-            # Replace any pending item (maxsize=1 ensures no backlog)
+            payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
+            self.__class__._persistent_sock.sendall(payload)
+        except (_sock.error, OSError, BrokenPipeError, ConnectionResetError, AttributeError):
+            # Reconnect
             try:
-                self.__class__._sync_queue.get_nowait()
-            except _queue.Empty:
+                if self.__class__._persistent_sock is not None:
+                    self.__class__._persistent_sock.close()
+            except Exception:
                 pass
-            self.__class__._sync_queue.put((pixels, brightness))
+            self.__class__._persistent_sock = None
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(3)
+            s.connect((self._ip, self._port))
+            payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
+            s.sendall(payload)
+            self.__class__._persistent_sock = s
 
-    def apply_state_sync(self, state_name: str):
-        """Apply state via background dispatch thread."""
+    def _cube_apply(self, state_name: str):
+        """Synchronous state apply: activate FX → set bright → update LEDs."""
         resolved = STATE_ALIASES.get(state_name, state_name)
         state_def = STATE_DEFS.get(resolved)
         if not state_def:
             return
 
-        lit = layout_text_centered(state_def["text"]) if state_def["text"] else []
+        text = state_def["text"]
+        lit = layout_text_centered(text) if text else []
         pixels = build_pixel_array(lit, state_def["rgb"], state_def["brightness"])
-        self._sync_send(pixels, state_def["text"], state_def["brightness"])
+        brightness = state_def["brightness"]
+        rgb_data = encode_pixel_array(pixels)
+
+        with self._get_cube_lock():
+            self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
+            _time.sleep(0.05)
+            self._cube_send({"id": 2, "method": "set_bright", "params": [brightness]})
+            _time.sleep(0.05)
+            self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
+
+    def apply_state_sync(self, state_name: str):
+        """Called from relay thread — sync, blocking, single-connection."""
+        self._cube_apply(state_name)
 
     def stop_effects_sync(self):
         """Turn off display."""
-        pixels = build_pixel_array([], (0, 0, 0), 0)
-        self._sync_send(pixels, "", 0)
+        with self._get_cube_lock():
+            try:
+                self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
+                _time.sleep(0.05)
+                self._cube_send({"id": 2, "method": "set_bright", "params": [0]})
+                _time.sleep(0.05)
+                rgb_data = encode_pixel_array(build_pixel_array([], (0, 0, 0), 0))
+                self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
+            except Exception:
+                pass
+
+    # ── Animation Engine (kept for backward compatibility) ──
 
     # ── Animation Engine (kept for backward compatibility) ──
 
