@@ -94,16 +94,20 @@ _bulb_lock = Lock()
 # Cube Lite state
 _is_cube_lite = False
 _cube_controller = None
+_cube_loop = None  # persistent event loop for Cube Lite operations
 
 @atexit.register
 def _cleanup():
-    global _cube_controller
+    global _cube_controller, _cube_loop
     if _cube_controller is not None:
         try:
-            asyncio.run(_cube_controller.stop_effects())
-            asyncio.run(_cube_controller.close())
+            loop = _cube_loop or asyncio.new_event_loop()
+            loop.run_until_complete(_cube_controller.stop_effects())
+            loop.run_until_complete(_cube_controller.close())
         except Exception:
             pass
+        _cube_controller = None
+        _cube_loop = None
     if _persistent_bulb is not None:
         try:
             _persistent_bulb.stop_flow()
@@ -125,23 +129,21 @@ def _detect_device_type(ip: str) -> bool:
 
     Uses Cube Lite protocol directly: creates a CubeLiteController and attempts
     TCP connect + activate_fx_mode. If the device responds, it's a Cube Lite.
-    The controller stays connected (avoids double-connect issue where Cube
-    firmware rejects new connections after a raw-socket probe).
+    Uses persistent _cube_loop to avoid event-loop-per-call issues.
 
     Fallback: standard Bulb.get_properties() with model/name pattern matching.
     """
-    global _is_cube_lite, _cube_controller
+    global _is_cube_lite, _cube_controller, _cube_loop
     if not _CUBE_AVAILABLE:
         print("[relay] Cube support not available (zeroconf missing)")
         return False
 
     # Method 1: Cube Lite protocol via CubeLiteController
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         ctrl = CubeLiteController(ip)
-        ok = loop.run_until_complete(ctrl.connect())
-        loop.close()
+        _cube_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_cube_loop)
+        ok = _cube_loop.run_until_complete(ctrl.connect())
         if ok:
             _is_cube_lite = True
             _cube_controller = ctrl
@@ -257,20 +259,22 @@ def _apply_locked(bulb, state_name):
 
 
 def _run_cube_state(state_name):
-    """Dispatch state to Cube Lite controller in a background thread."""
-    global _cube_controller
+    """Dispatch state to Cube Lite controller using a persistent event loop."""
+    global _cube_controller, _cube_loop
     if _cube_controller is None:
         return
 
+    # Create persistent event loop on first call
+    if _cube_loop is None:
+        _cube_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_cube_loop)
+
     def _run():
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             if state_name == "stop":
-                loop.run_until_complete(_cube_controller.stop_effects())
+                _cube_loop.run_until_complete(_cube_controller.stop_effects())
             else:
-                loop.run_until_complete(_cube_controller.apply_state(state_name))
-            loop.close()
+                _cube_loop.run_until_complete(_cube_controller.apply_state(state_name, _cube_loop))
         except Exception:
             pass
 
@@ -726,7 +730,7 @@ class RelayHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _is_cube_lite, _cube_controller
+    global _is_cube_lite, _cube_controller, _cube_loop
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9877
     bulb_ip = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_IP
     RelayHandler.bulb_ip = bulb_ip
@@ -736,18 +740,16 @@ def main():
 
     # 启动时预连接并检测设备类型
     def _warmup():
-        global _is_cube_lite, _cube_controller
+        global _is_cube_lite, _cube_controller, _cube_loop
         try:
-            # 检测是否为 Cube Lite（检测成功时 controller 已连接）
             if _CUBE_AVAILABLE and _detect_device_type(bulb_ip):
-                # _detect_device_type Method 1 already connected the controller
-                # Method 2 fallback needs to connect now
+                # _detect_device_type already connected & set _cube_loop
                 if not _cube_controller or not _cube_controller._socket:
                     print(f"[relay] 尝试连接 Cube Lite, IP={bulb_ip}")
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    ok = loop.run_until_complete(_cube_controller.connect())
-                    loop.close()
+                    if _cube_loop is None:
+                        _cube_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(_cube_loop)
+                    ok = _cube_loop.run_until_complete(_cube_controller.connect())
                     if ok:
                         print(f"[relay] Cube Lite 已连接并激活 FX 模式")
                     else:

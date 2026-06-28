@@ -285,7 +285,7 @@ class CubeLiteController:
 
     # ── State Application ─────────────────────────────────
 
-    async def apply_state(self, state_name: str):
+    async def apply_state(self, state_name: str, loop: Optional[asyncio.AbstractEventLoop] = None):
         """Apply an AI agent state to the Cube Lite display.
 
         Handles:
@@ -296,6 +296,7 @@ class CubeLiteController:
 
         Args:
             state_name: State key (e.g., "thinking", "waiting", "green" alias)
+            loop: Event loop for animation tasks; required when no running loop.
         """
         # Resolve alias
         resolved = STATE_ALIASES.get(state_name, state_name)
@@ -320,7 +321,7 @@ class CubeLiteController:
             else:
                 # Start animation loop
                 animation_brightness = state_def["brightness"]
-                self._start_animation(text, color, animation, animation_brightness)
+                self._start_animation(text, color, animation, animation_brightness, loop)
 
         except Exception as e:
             logger.warning(f"[CubeLite] [{self._ip}] apply_state({state_name}) failed: {e}")
@@ -342,15 +343,17 @@ class CubeLiteController:
 
     # ── Animation Engine ──────────────────────────────────
 
-    def _start_animation(self, text: str, color: tuple, animation: str, base_brightness: int):
+    def _start_animation(self, text: str, color: tuple, animation: str, base_brightness: int, loop: Optional[asyncio.AbstractEventLoop] = None):
         """Start async animation loop for breathing/flashing effects.
 
         Pre-computes pixel frames at different brightness levels and sends them
         at controlled intervals. Runs until _stop_animation() is called or
         state changes.
 
-        Animation sends ~10-20 commands per second max (MIN_COMMAND_INTERVAL = 100ms).
-        Each cycle is 6-10 frames over 0.9-3.0 seconds — safe for Cube TCP stack.
+        Args:
+            loop: Optional event loop to create the task in. If not provided,
+                  uses get_running_loop(). Must be provided when called from
+                  a thread without a running loop.
         """
         anim_cfg = ANIMATION_CONFIG.get(animation)
         if not anim_cfg:
@@ -385,7 +388,7 @@ class CubeLiteController:
             except Exception as e:
                 logger.debug(f"[CubeLite] [{self._ip}] Animation stopped: {e}")
 
-        self._anim_task = asyncio.ensure_future(_anim_loop())
+        self._anim_task = asyncio.ensure_future(_anim_loop(), loop=loop)
 
     def _stop_animation(self):
         """Cancel the running animation task."""
