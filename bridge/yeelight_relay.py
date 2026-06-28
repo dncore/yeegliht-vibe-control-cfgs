@@ -484,26 +484,83 @@ class RelayHandler(BaseHTTPRequestHandler):
                     return
 
                 result = []
+                seen_ips = set()
 
-                # 1. 先尝试 SSDP 多播发现
+                def add_entry(entry):
+                    ip = entry.get("ip", "")
+                    if ip and ip not in seen_ips:
+                        seen_ips.add(ip)
+                        result.append(entry)
+
+                # 1. SSDP 多播发现（标准 Yeelight 协议，Cube Lite 也会响应）
                 try:
                     bulbs = discover_bulbs(timeout=3)
                     for info in bulbs:
-                        result.append({
+                        model = info.get("model", "unknown")
+                        add_entry({
                             "ip": info.get("ip", ""),
                             "port": info.get("port", 55443),
-                            "model": info.get("model", "unknown"),
+                            "model": model,
                             "name": info.get("name", f"Yeelight-{info.get('ip', '??')}"),
+                            "is_cube": any(p in model.lower() for p in ('cube', 'clt', 'cubelite')),
                         })
                 except Exception:
                     pass
 
-                # 2. SSDP 没结果 → 扫本机所在子网 55443 端口
+                # 2. mDNS/Zeroconf 发现 Cube Lite 设备
+                #    Cube Lite 注册为 yeelink-light-<model>-<id>._miio._udp.local.
+                try:
+                    from zeroconf import ServiceBrowser, Zeroconf, ServiceStateChange
+
+                    class CubeListener:
+                        def __init__(self):
+                            self.found = []
+
+                        def add_service(self, zc: Zeroconf, service_type: str, name: str):
+                            info = zc.get_service_info(service_type, name)
+                            if info and info.addresses:
+                                ip = socket.inet_ntoa(info.addresses[0])
+                                model = "unknown"
+                                name_display = name.split(".")[0] if "." in name else name
+                                m = __import__('re').search(
+                                    r'yeelink-light-([a-z0-9]+)', name.lower()
+                                )
+                                if m:
+                                    model = f"yeelink.light.{m.group(1)}"
+                                self.found.append({
+                                    "ip": ip,
+                                    "port": 55443,
+                                    "model": model,
+                                    "name": name_display,
+                                    "is_cube": True,
+                                })
+
+                        def remove_service(self, zc, service_type, name):
+                            pass
+
+                        def update_service(self, zc, service_type, name):
+                            pass
+
+                    zc = Zeroconf()
+                    listener = CubeListener()
+                    browser = ServiceBrowser(
+                        zc, "_miio._udp.local.", listener=listener,
+                    )
+                    import time as _time
+                    _time.sleep(2)  # wait for mDNS responses
+                    zc.close()
+                    for entry in listener.found:
+                        add_entry(entry)
+                except ImportError:
+                    pass  # zeroconf not installed — skip mDNS
+                except Exception:
+                    pass  # mDNS discovery failed silently
+
+                # 3. 无结果 → TCP 端口扫描回退
                 if not result:
                     from concurrent.futures import ThreadPoolExecutor, as_completed
 
                     def probe(ip):
-                        """快速端口扫描（不查询型号，避免与 relay 持久连接冲突）"""
                         try:
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             s.settimeout(0.2)
@@ -513,7 +570,6 @@ class RelayHandler(BaseHTTPRequestHandler):
                         except Exception:
                             return None
 
-                    # 取本机所有私有网段
                     def local_prefixes():
                         prefixes = []
                         try:
@@ -534,19 +590,19 @@ class RelayHandler(BaseHTTPRequestHandler):
                         for future in as_completed(futures):
                             r = future.result()
                             if r:
-                                result.append(r)
+                                add_entry(r)
 
-                # 3. 用 relay 已有的持久连接查询型号（避免冲突）
-                #    同时尝试反向 DNS 解析主机名
+                # 4. 型号充实：对所有 unknown 型号的设备，查询 get_properties()
+                #    不只是 relay 自己的 IP —— 用临时连接查询后立即关闭
                 for entry in result:
                     ip = entry.get("ip", "")
-                    # 尝试反向 DNS 获取主机名（短超时，避免阻塞）
-                    if not entry.get("name") or entry.get("name","").startswith("Yeelight-"):
+
+                    # 反向 DNS 获取主机名
+                    if not entry.get("name") or entry.get("name", "").startswith("Yeelight-"):
                         try:
                             host = socket.gethostbyaddr(ip)
                             if host and host[0]:
                                 entry["name"] = host[0]
-                                # 从主机名提取型号: yeelink-light-color8_mibt2EF1 → color8
                                 if entry.get("model") == "unknown" and "yeelink" in host[0].lower():
                                     import re
                                     m = re.search(r'yeelink-light-([a-z0-9]+)', host[0].lower())
@@ -554,19 +610,27 @@ class RelayHandler(BaseHTTPRequestHandler):
                                         entry["model"] = f"yeelink.light.{m.group(1)}"
                         except Exception:
                             pass
-                    # 用持久连接查询型号
-                    if entry.get("model") == "unknown" and ip == self.bulb_ip:
+
+                    # 查询型号（所有 unknown 设备，不限于 relay IP）
+                    if entry.get("model") == "unknown":
                         try:
-                            bulb = _get_bulb(self.bulb_ip)
+                            # 用独立连接查询，避免干扰 relay 持久连接
+                            bulb = Bulb(ip, auto_on=False, effect="sudden", duration=0)
                             props = bulb.get_properties()
                             if props:
-                                entry["model"] = props.get("model", "unknown")
-                                # props 返回的 name 优先于 DNS
+                                model = props.get("model", "unknown")
+                                entry["model"] = model
                                 prop_name = props.get("name")
                                 if prop_name:
                                     entry["name"] = prop_name
                         except Exception:
                             pass
+
+                    # 标记 Cube 设备
+                    model = entry.get("model", "")
+                    entry["is_cube"] = any(
+                        p in model.lower() for p in ('cube', 'clt', 'cubelite')
+                    )
 
                 self._send_json({"ok": True, "bulbs": result, "count": len(result)})
             except Exception as e:

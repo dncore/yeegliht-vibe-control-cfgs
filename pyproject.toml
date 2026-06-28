@@ -14,6 +14,9 @@ dependencies = [
     "yeelight",
 ]
 
+[project.optional-dependencies]
+cube = ["zeroconf"]
+
 [project.scripts]
 yeelight-bridge = "bridge.yeelight_bridge:main"
 

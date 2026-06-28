@@ -313,8 +313,7 @@ def cmd_discover():
         model = b.get('model', '?')
         name = b.get('name', b.get('ip'))
         ip = b.get('ip')
-        # 标记 Cube Lite 设备
-        is_cube = any(p in model.lower() for p in ['cube', 'clt', 'cubelite'])
+        is_cube = b.get('is_cube', False)
         cube_mark = " 🧊 Cube Lite" if is_cube else ""
         print(f"    {i+1}. {name} ({ip}) [{model}]{cube_mark}")
 

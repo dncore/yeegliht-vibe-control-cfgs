@@ -77,6 +77,7 @@
 | Python 3.8+ | `pip install yeelight` |
 | Yeelight bulb | Enable **LAN Control** in the Yeelight App (Cube Lite: use **Yeelight Station** app) |
 | Same network | Computer and bulb on the same LAN |
+| mDNS (optional) | `pip install .[cube]` or `pip install zeroconf` — enables automatic Cube Lite discovery |
 | Cube Lite | See [Cube Lite Pixel Art Reference](docs/cube-lite-pixel-art.md) for matrix display details |
 
 ## Quick Start
@@ -162,7 +163,7 @@ All commands via `yeelight-bridge <command> [args...]`.
 
 | Command | Description |
 |---------|-------------|
-| `discover` | Scan LAN for Yeelight bulbs (SSDP + TCP scan + reverse DNS) |
+| `discover` | Scan LAN for Yeelight bulbs (SSDP + mDNS + TCP scan) |
 | `setup-bulbs` | Interactive menu: add, remove, rename bulbs, set default |
 | `test <state> [ip]` | Send a light state directly to the bulb for testing |
 
@@ -177,14 +178,21 @@ All commands via `yeelight-bridge <command> [args...]`.
 ```
 $ yeelight-bridge discover
 
-  ✅ Found 1 device:
+  ✅ Found 2 devices:
     1. yeelink-light-color8_mibt2EF1.lan (192.168.2.205) [yeelink.light.color8]
+    2. yeelink-light-clt6pro_mibt3AB12.lan (192.168.2.206) [yeelink.light.clt6pro] 🧊 Cube Lite
 ```
+
+Discovery uses a 4-stage pipeline:
+1. **SSDP** multicast — standard Yeelight protocol, catches all WiFi bulbs + Cube Lite
+2. **mDNS/Zeroconf** — `_miio._udp.local.` service type (`pip install zeroconf` for best results)
+3. **TCP port scan** — fallback: probes 55443 on local subnets
+4. **Model enrichment** — queries `get_properties()` on every discovered device to identify Cube Lite models (`cube`, `clt`, `cubelite`)
 
 Device names are resolved via:
 1. SSDP broadcast name
 2. Bulb `get_properties()` name
-3. **Reverse DNS** hostname (e.g. `yeelink-light-color8_mibt2EF1.lan`)
+3. **Reverse DNS** hostname (e.g. `yeelink-light-clt6pro_mibt3AB12.lan`)
 4. Fallback: `Yeelight-{ip}`
 
 Model is extracted from SSDP, `get_properties()`, or hostname pattern matching.
