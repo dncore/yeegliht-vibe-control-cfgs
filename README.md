@@ -95,6 +95,29 @@ yeelight-bridge adapter claude-code      # Claude Code: restart to apply
 yeelight-bridge adapter pi-agent         # Pi Agent: shows copy instructions
 ```
 
+### Upgrade
+
+To upgrade an existing installation (e.g. to add Cube Lite support, or pull in new features):
+
+```bash
+# 1. Pull latest code & reinstall bridge
+cd yeelight-vibe-control-cfgs
+git pull
+pip install .
+yeelight-bridge install       # copies updated modules to ~/.yeelight-vibe-bridge/
+
+# 2. Restart relay (auto-detects device type: standard bulb or Cube Lite)
+yeelight-bridge stop
+yeelight-bridge start         # uses saved default bulb IP
+# or: yeelight-bridge start <ip>
+
+# 3. Verify
+yeelight-bridge status        # shows device type + connection health
+yeelight-bridge test thinking # quick smoke test
+```
+
+> **Note:** Claude Code / Pi Agent adapters do **not** need to be reinstalled after an upgrade. The HTTP API is backward-compatible — the relay auto-detects your device type (standard bulb or Cube Lite) and routes commands accordingly.
+
 ### Arch Linux / PEP 668
 
 Arch Linux enforces [PEP 668](https://peps.python.org/pep-0668/) — direct `pip install` is blocked. Use one of:

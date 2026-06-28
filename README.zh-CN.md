@@ -91,6 +91,30 @@ yeelight-bridge adapter claude-code      # Claude Code: 重启生效
 yeelight-bridge adapter pi-agent         # Pi Agent: 显示复制说明
 ```
 
+### 升级
+
+已有安装如何升级（例如添加 Cube Lite 支持，或拉取新功能）：
+
+```bash
+# 1. 拉取最新代码并重装 bridge
+cd yeelight-vibe-control-cfgs
+git pull
+pip install .
+yeelight-bridge install       # 复制更新后的模块到 ~/.yeelight-vibe-bridge/
+
+# 2. 重启 relay（自动检测设备类型：标准灯泡或 Cube Lite）
+yeelight-bridge stop
+yeelight-bridge start         # 使用已保存的默认灯泡 IP
+# 或: yeelight-bridge start <ip>
+
+# 3. 验证
+yeelight-bridge status        # 显示设备类型 + 连接状态
+yeelight-bridge test thinking # 快速冒烟测试
+```
+
+> **注意：** Claude Code / Pi Agent 适配器升级后**无需**重新安装。HTTP API 向后兼容 — relay 会自
+动检测设备类型（标准灯泡或 Cube Lite）并路由相应指令。
+
 ### Arch Linux / PEP 668
 
 Arch Linux 强制执行 [PEP 668](https://peps.python.org/pep-0668/)，直接 `pip install` 会被阻止。选用以下方式之一：
