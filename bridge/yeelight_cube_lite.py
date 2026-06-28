@@ -306,7 +306,7 @@ class CubeLiteController:
 
     def _get_cube_lock(self):
         if self.__class__._persistent_lock is None:
-            self.__class__._persistent_lock = _threading.Lock()
+            self.__class__._persistent_lock = threading.Lock()
         return self.__class__._persistent_lock
 
     def _cube_send(self, cmd_dict: dict):
@@ -351,9 +351,9 @@ class CubeLiteController:
 
         with self._get_cube_lock():
             self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
-            _time.sleep(0.05)
+            time.sleep(0.05)
             self._cube_send({"id": 2, "method": "set_bright", "params": [brightness]})
-            _time.sleep(0.05)
+            time.sleep(0.05)
             self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
 
     def apply_state_sync(self, state_name: str):
@@ -365,9 +365,9 @@ class CubeLiteController:
         with self._get_cube_lock():
             try:
                 self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
-                _time.sleep(0.05)
+                time.sleep(0.05)
                 self._cube_send({"id": 2, "method": "set_bright", "params": [0]})
-                _time.sleep(0.05)
+                time.sleep(0.05)
                 rgb_data = encode_pixel_array(build_pixel_array([], (0, 0, 0), 0))
                 self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
             except Exception:

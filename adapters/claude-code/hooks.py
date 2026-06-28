@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Claude Code hook → bridge relay. Minimal imports for fast startup on Windows."""
-import json, sys
+import json, sys, os, time
 from urllib.request import Request, urlopen
 
 BRIDGE = "http://127.0.0.1:9877"
+LOG = os.path.expanduser("~/.yeelight-vibe-bridge/hook_debug.log")
 READ_TOOLS = {"Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"}
 WRITE_TOOLS = {"Write","Edit","NotebookEdit"}
 EXEC_TOOLS = {"Bash","PowerShell"}
@@ -16,7 +17,11 @@ def post(path, data):
         req = Request(f"{BRIDGE}{path}", data=body, method="POST")
         req.add_header("Content-Type", "application/json")
         urlopen(req, timeout=0.3)
-    except Exception: pass
+        with open(LOG, "a") as f:
+            f.write(f"[{time.time():.0f}] {path} {data.get('state','?')} OK\n")
+    except Exception as e:
+        with open(LOG, "a") as f:
+            f.write(f"[{time.time():.0f}] {path} {data.get('state','?')} ERROR: {e}\n")
 
 def read_event():
     try:
