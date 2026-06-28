@@ -303,14 +303,34 @@ class CubeLiteController:
 
     _persistent_sock: socket.socket = None
     _persistent_lock = None  # created lazily
+    _fx_last = 0.0           # last FX activation timestamp
 
     def _get_cube_lock(self):
         if self.__class__._persistent_lock is None:
             self.__class__._persistent_lock = threading.Lock()
         return self.__class__._persistent_lock
 
+    def _drain(self):
+        """Drain pending response data from Cube's TCP receive buffer.
+        Cube firmware stops processing commands when RX buffer fills up
+        (~20-30 unread responses). Must drain after every send."""
+        import socket as _sock
+        sock = self.__class__._persistent_sock
+        if sock is None:
+            return
+        sock.settimeout(0.01)
+        try:
+            for _ in range(10):
+                r = sock.recv(4096)
+                if not r:
+                    break
+        except (_sock.timeout, BlockingIOError, OSError):
+            pass
+        finally:
+            sock.settimeout(3)
+
     def _cube_send(self, cmd_dict: dict):
-        """Send one JSON command on persistent socket with reconnect."""
+        """Send one JSON command on persistent socket with reconnect + drain."""
         import socket as _sock
 
         # Retry up to 2 times on connection errors
@@ -326,6 +346,7 @@ class CubeLiteController:
 
                 payload = (json.dumps(cmd_dict, separators=(",", ":")) + "\r\n").encode("utf8")
                 self.__class__._persistent_sock.sendall(payload)
+                self._drain()  # prevent Cube RX buffer from filling up
                 return  # success
             except (_sock.error, OSError, BrokenPipeError, ConnectionResetError, AttributeError):
                 # Close stale socket
@@ -337,7 +358,8 @@ class CubeLiteController:
                 self.__class__._persistent_sock = None
 
     def _cube_apply(self, state_name: str):
-        """Synchronous state apply: activate FX → set bright → update LEDs."""
+        """Synchronous state apply: activate FX (throttled) → set bright → update LEDs.
+        FX mode only re-activated at most once per 20s (~25s duration)."""
         resolved = STATE_ALIASES.get(state_name, state_name)
         state_def = STATE_DEFS.get(resolved)
         if not state_def:
@@ -350,8 +372,12 @@ class CubeLiteController:
         rgb_data = encode_pixel_array(pixels)
 
         with self._get_cube_lock():
-            self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
-            time.sleep(0.05)
+            now = time.time()
+            # FX mode lasts ~25s — only re-activate every 20s
+            if now - self.__class__._fx_last > 20:
+                self._cube_send({"id": 1, "method": "activate_fx_mode", "params": [{"mode": "direct"}]})
+                time.sleep(0.05)
+                self.__class__._fx_last = now
             self._cube_send({"id": 2, "method": "set_bright", "params": [brightness]})
             time.sleep(0.05)
             self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
