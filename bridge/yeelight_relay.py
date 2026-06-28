@@ -278,19 +278,21 @@ def _run_cube_state(state_name):
     if _cube_controller is None or _cube_loop is None:
         return
 
+    async def _do_state():
+        try:
+            # Full cycle: ensure FX fresh → stop animations → apply new state
+            await _cube_controller._ensure_fx()
+            await _cube_controller.apply_state(state_name, _cube_loop)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
     if state_name == "stop":
         asyncio.run_coroutine_threadsafe(
             _cube_controller.stop_effects(), _cube_loop
         )
     else:
-        # Ensure FX mode is fresh then apply state — as a single sequential coroutine
-        async def _ensure_and_apply():
-            try:
-                await _cube_controller._ensure_fx()
-                await _cube_controller.apply_state(state_name, _cube_loop)
-            except Exception:
-                pass
-        asyncio.run_coroutine_threadsafe(_ensure_and_apply(), _cube_loop)
+        asyncio.run_coroutine_threadsafe(_do_state(), _cube_loop)
 
 # ═══════════════ 多实例协调 ═══════════════
 
