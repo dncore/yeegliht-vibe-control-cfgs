@@ -283,6 +283,10 @@ def _run_cube_state(state_name):
             _cube_controller.stop_effects(), _cube_loop
         )
     else:
+        # Ensure FX mode is fresh before applying state
+        asyncio.run_coroutine_threadsafe(
+            _cube_controller._ensure_fx(), _cube_loop
+        )
         asyncio.run_coroutine_threadsafe(
             _cube_controller.apply_state(state_name, _cube_loop), _cube_loop
         )
@@ -504,10 +508,10 @@ class RelayHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "state": final, "label": label_text,
                                  "strategy": data.get("strategy","priority"),
                                  "sessions": len(data.get("sessions",{}))})
-                # 后台执行 Cube Lite 状态（非阻塞 fire-and-forget）
-                if _is_cube_lite:
+                # 后台执行 Cube Lite 状态
+                if _is_cube_lite and _cube_controller is not None:
                     _run_cube_state(final)
-                else:
+                elif not _is_cube_lite:
                     def _run():
                         try:
                             result = apply_state(final, self.bulb_ip)
