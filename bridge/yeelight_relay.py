@@ -349,10 +349,7 @@ def apply_state(state, ip):
         return {"ok": False, "error": "yeelight 包未安装"}
     if _is_cube_lite and _cube_controller is not None:
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_cube_controller.apply_state(state))
-            loop.close()
+            _run_cube_state(state)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
