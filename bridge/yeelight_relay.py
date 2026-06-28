@@ -283,13 +283,14 @@ def _run_cube_state(state_name):
             _cube_controller.stop_effects(), _cube_loop
         )
     else:
-        # Ensure FX mode is fresh before applying state
-        asyncio.run_coroutine_threadsafe(
-            _cube_controller._ensure_fx(), _cube_loop
-        )
-        asyncio.run_coroutine_threadsafe(
-            _cube_controller.apply_state(state_name, _cube_loop), _cube_loop
-        )
+        # Ensure FX mode is fresh then apply state — as a single sequential coroutine
+        async def _ensure_and_apply():
+            try:
+                await _cube_controller._ensure_fx()
+                await _cube_controller.apply_state(state_name, _cube_loop)
+            except Exception:
+                pass
+        asyncio.run_coroutine_threadsafe(_ensure_and_apply(), _cube_loop)
 
 # ═══════════════ 多实例协调 ═══════════════
 
