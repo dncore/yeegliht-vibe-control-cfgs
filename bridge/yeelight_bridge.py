@@ -274,6 +274,7 @@ def cmd_status():
     print(f"  relay 运行: {'✅ 是' if info.get('ok') else '❌ 否'}")
     if info.get("ok"):
         print(f"  yeelight 包: {'✅' if health.get('yeelight_available') else '❌'}")
+        print(f"  设备类型:   {'🧊 Cube Lite' if health.get('device_type') == 'cube_lite' else '💡 标准灯泡'}")
         print(f"  灯泡连接:   {'✅' if health.get('bulb_connected') else '❌'}")
         print(f"  灯泡 IP:    {health.get('bulb_ip', '?')}")
         print(f"  活跃会话:   {info.get('sessions', 0)}")
@@ -282,7 +283,7 @@ def cmd_status():
 
 
 def cmd_discover():
-    """发现局域网灯泡"""
+    """发现局域网灯泡（含 Cube Lite）"""
     # 需要 relay 运行（用于 SSDP 发现）
     if not is_relay_running():
         print("  relay 未运行，使用备用 TCP 扫描...")
@@ -306,7 +307,13 @@ def cmd_discover():
 
     print(f"\n  ✅ 发现 {len(bulbs)} 个设备:")
     for i, b in enumerate(bulbs):
-        print(f"    {i+1}. {b.get('name', b.get('ip'))} ({b.get('ip')}) [{b.get('model', '?')}]")
+        model = b.get('model', '?')
+        name = b.get('name', b.get('ip'))
+        ip = b.get('ip')
+        # 标记 Cube Lite 设备
+        is_cube = any(p in model.lower() for p in ['cube', 'clt', 'cubelite'])
+        cube_mark = " 🧊 Cube Lite" if is_cube else ""
+        print(f"    {i+1}. {name} ({ip}) [{model}]{cube_mark}")
 
 
 def cmd_setup_bulbs():
@@ -418,7 +425,7 @@ def cmd_setup_bulbs():
 
 
 def cmd_test(state, ip=None):
-    """直接测试灯光状态"""
+    """直接测试灯光状态（支持 Cube Lite）"""
     if not ip:
         bulb = get_default_bulb()
         if not bulb:
@@ -433,7 +440,8 @@ def cmd_test(state, ip=None):
 
     result = relay_request("/api/direct", {"state": state})
     if result.get("ok"):
-        print(f"  ✓ 灯光已设置为: {state}")
+        label = result.get("label", state)
+        print(f"  ✓ 灯光已设置为: {state} ({label})")
     else:
         print(f"  ❌ 设置失败: {result.get('error', '未知错误')}")
 

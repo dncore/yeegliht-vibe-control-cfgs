@@ -75,8 +75,9 @@
 | Requirement | Details |
 |-------------|---------|
 | Python 3.8+ | `pip install yeelight` |
-| Yeelight bulb | Enable **LAN Control** in the Yeelight App |
+| Yeelight bulb | Enable **LAN Control** in the Yeelight App (Cube Lite: use **Yeelight Station** app) |
 | Same network | Computer and bulb on the same LAN |
+| Cube Lite | See [Cube Lite Pixel Art Reference](docs/cube-lite-pixel-art.md) for matrix display details |
 
 ## Quick Start
 
@@ -169,17 +170,20 @@ Model is extracted from SSDP, `get_properties()`, or hostname pattern matching.
 
 All agents map **same semantic events to same light effects**.
 
-| Semantic | Light Effect | RGB |
-|----------|-------------|-----|
-| Working / Thinking | 🟦 blue breathe | (0,68,255) |
-| Waiting for you | 🟧 amber solid | (255,140,0) |
-| Reading files | 🟦 cyan breathe | (0,200,255) |
-| Writing files | 🟪 magenta breathe | (255,50,120) |
-| Running commands | 🟧 orange breathe | (220,90,0) |
-| Fetching web | 🟦 blue flash | (0,100,255) |
-| Querying context | 🟩 green breathe | (0,160,100) |
-| Error | 🟥 red solid | (255,30,30) |
-| Task done | ⬜ warm white solid | (255,240,230) bri=30% |
+**Standard Bulb** — single-color breathing/flashing effects.  
+**Cube Lite** — dot matrix text display. See **[Cube Lite Pixel Art Reference](docs/cube-lite-pixel-art.md)** for ASCII renderings of all 10 states on the 20×5 LED matrix.
+
+| Semantic | Standard Bulb Effect | Cube Lite Display | RGB |
+|----------|---------------------|-------------------|-----|
+| Working / Thinking | 🟦 blue breathe | `THINK` blue breathe | (0,68,255) |
+| Waiting for you | 🟧 amber solid | `WAIT` amber pulse | (255,140,0) |
+| Reading files | 🟦 cyan breathe | `READ` cyan breathe | (0,200,255) |
+| Writing files | 🟪 magenta breathe | `WRITE` magenta breathe | (255,50,120) |
+| Running commands | 🟧 orange breathe | `EXEC` orange breathe | (220,90,0) |
+| Fetching web | 🟦 blue flash | `FETCH` sky blue flash | (0,100,255) |
+| Querying context | 🟩 green breathe | `QUERY` green breathe | (0,160,100) |
+| Error | 🟥 red solid | `ERR!` red blink | (255,30,30) |
+| Task done | ⬜ warm white solid | `DONE` warm white | (255,240,230) | bri=30% |
 
 ## Project Structure
 
