@@ -470,17 +470,45 @@ class RelayHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
                 return
             self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
-            # 后台线程执行实际灯泡操作
-            def _run():
+            # 同步执行 Cube 操作（使用 threading.Lock 串行化）
+            if _is_cube_lite:
                 try:
-                    if _is_cube_lite:
-                        _run_cube_state(state)
-                    else:
-                        bulb = _get_bulb(self.bulb_ip)
-                        _apply_locked(bulb, state)
+                    _run_cube_state(state)
                 except Exception:
                     pass
-            Thread(target=_run, daemon=True).start()
+            else:
+                def _run():
+                    try:
+                        bulb = _get_bulb(self.bulb_ip)
+                        _apply_locked(bulb, state)
+                    except Exception:
+                        pass
+                Thread(target=_run, daemon=True).start()
+
+        elif path == "/api/direct_sync":
+            """Same as /api/direct but synchronous — waits for Cube to respond."""
+            raw = body.get("state", "").lower()
+            state = raw if raw == "stop" else _ALIASES.get(raw, raw)
+            if _is_cube_lite:
+                try:
+                    from .cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                except ImportError:
+                    from cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                resolved = CUBE_ALIASES.get(state, state)
+                s = STATE_DEFS.get(resolved)
+            else:
+                s = None if state == "stop" else _STATES.get(state)
+            if not s and state != "stop":
+                self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
+                return
+            if _is_cube_lite:
+                try:
+                    _run_cube_state(state)
+                    self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
+                except Exception as e:
+                    self._send_json({"ok": False, "error": str(e)})
+            else:
+                self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
 
         elif path == "/api/state":
             raw = body.get("state", "").lower()
@@ -505,11 +533,9 @@ class RelayHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "state": final, "label": label_text,
                                  "strategy": data.get("strategy","priority"),
                                  "sessions": len(data.get("sessions",{}))})
-                # 后台执行 Cube Lite 状态（每种状态都直接写入 Cube，不会丢失）
+                # 后台执行 Cube Lite 状态（同步 TCP dispatch，不需要 event loop）
                 if _is_cube_lite and _cube_controller is not None:
-                    if _cube_loop and _cube_loop.is_running():
-                        # Use sync dispatch for reliability
-                        _run_cube_state(final)
+                    _run_cube_state(final)
                 elif not _is_cube_lite:
                     def _run():
                         try:

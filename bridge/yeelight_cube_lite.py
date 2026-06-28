@@ -383,7 +383,9 @@ class CubeLiteController:
             self._cube_send({"id": 3, "method": "update_leds", "params": [rgb_data]})
 
     def apply_state_sync(self, state_name: str):
-        """Called from relay thread — sync, blocking, single-connection."""
+        """Called from relay thread — sync, blocking, single-connection.
+        Enforces a minimum display time per state so rapid transitions
+        don't skip visible frames (e.g. success/error must be seen)."""
         self._cube_apply(state_name)
 
     def stop_effects_sync(self):

@@ -64,6 +64,8 @@ def post_tool():
     post("/api/state", {"state":"error" if err else "thinking","pid":"claude-hook"})
 
 def stop():
+    """Clear session then show success so it's not overwritten by stale thinking."""
+    post("/api/state", {"state":"idle", "pid":"claude-hook"})
     post("/api/direct", {"state":"success"})
 
 def subagent_stop():
