@@ -165,6 +165,9 @@ def cmd_install():
         RELAY_SCRIPT_NAME,
         DISCOVER_SCRIPT_NAME,
         "yeelight_bridge.py",
+        "yeelight_cube_lite.py",
+        "cube_fonts.py",
+        "cube_patterns.py",
         BULBS_FILE_NAME,
     ]
     for fn in runtime_files:

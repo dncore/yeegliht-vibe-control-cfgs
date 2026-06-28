@@ -80,7 +80,11 @@ try:
     from .yeelight_cube_lite import CubeLiteController, is_cube_device
     _CUBE_AVAILABLE = True
 except ImportError:
-    pass
+    try:
+        from yeelight_cube_lite import CubeLiteController, is_cube_device  # type: ignore[no-redef]
+        _CUBE_AVAILABLE = True
+    except ImportError:
+        pass
 
 _bulb_instance = None
 _persistent_bulb = None
@@ -418,7 +422,10 @@ class RelayHandler(BaseHTTPRequestHandler):
             state = raw if raw == "stop" else _ALIASES.get(raw, raw)
             # 先回 OK，再后台执行（避免客户端等灯泡响应超时）
             if _is_cube_lite:
-                from .cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                try:
+                    from .cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                except ImportError:
+                    from cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES  # type: ignore[no-redef]
                 resolved = CUBE_ALIASES.get(state, state)
                 s = STATE_DEFS.get(resolved)
             else:
@@ -450,7 +457,10 @@ class RelayHandler(BaseHTTPRequestHandler):
             label_text = ""
             if final:
                 if _is_cube_lite:
-                    from .cube_patterns import STATE_DEFS as CUBE_STATE_DEFS
+                    try:
+                        from .cube_patterns import STATE_DEFS as CUBE_STATE_DEFS
+                    except ImportError:
+                        from cube_patterns import STATE_DEFS as CUBE_STATE_DEFS  # type: ignore[no-redef]
                     s = CUBE_STATE_DEFS.get(final)
                 else:
                     s = _STATES.get(final)
