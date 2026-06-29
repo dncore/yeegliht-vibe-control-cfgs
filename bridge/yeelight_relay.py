@@ -138,6 +138,119 @@ def _apply_bulb(bulb, state_name):
     elif mode == "flash":
         _flash(bulb, r, g, b, bri)
 
+# ═══════════════ 工具函数 ═══════════════
+
+def _get_host_ip():
+    """Get the primary LAN IP of this host."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        s.connect(("192.168.1.1", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        try:
+            for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+                if ip.startswith("192.168.") or ip.startswith("10."):
+                    return ip
+        except Exception:
+            pass
+    return "127.0.0.1"
+
+
+def _generate_skill(host_ip: str) -> str:
+    """Generate a Claude-compatible skill document for LAN AI agents."""
+    return f"""---
+name: yeelight-vibe-bridge
+description: Control smart lights via Yeelight Vibe Bridge relay on the local network. Maps AI agent states to Yeelight bulb colors and Cube Lite dot-matrix displays.
+---
+
+# Yeelight Vibe Bridge — LAN Agent Skill
+
+## Endpoint
+
+```
+POST http://{host_ip}:9877/api/state     # coordinated (share priority with other agents)
+POST http://{host_ip}:9877/api/direct    # immediate (bypass coordination)
+GET  http://{host_ip}:9877/api/status    # relay status
+```
+
+**Auth:** Include `Authorization: Bearer {API_KEY}` on all POST requests.
+
+## States
+
+| State | Label | Description |
+|-------|-------|-------------|
+| `idle` | 冰蓝待机 | Agent waiting, idle blue |
+| `waiting` | 等待用户 | Waiting for user input, orange |
+| `thinking` | 思考中 | AI thinking, blue breath |
+| `reading` | 读取文件 | Reading files, cyan breath |
+| `writing` | 写入编辑 | Writing/editing, pink breath |
+| `executing` | 执行命令 | Running commands, amber breath |
+| `querying` | 查询上下文 | Querying context, green breath |
+| `fetching` | 访问网络 | Fetching from web, blue flash |
+| `success` | 完成成功 | Task complete, warm white |
+| `error` | 出错停止 | Error, red |
+| `off` | 关闭 | Turn off lights |
+
+## Usage
+
+### Coordinated mode (recommended)
+
+Send your agent state to `/api/state` with a unique `pid`. The relay aggregates all sessions by priority. Highest-priority state wins and is broadcast to all devices.
+
+```bash
+curl -s -X POST http://{host_ip}:9877/api/state \\
+  -H "Authorization: Bearer {API_KEY}" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"state":"thinking","pid":"my-agent-1"}}'
+```
+
+Your session expires after 30s of inactivity. Send updates regularly to stay active.
+
+### Direct mode
+
+Send to `/api/direct` to immediately set lights without coordination. Useful for testing or exclusive control.
+
+```bash
+curl -s -X POST http://{host_ip}:9877/api/direct \\
+  -H "Authorization: Bearer {API_KEY}" \\
+  -d '{{"state":"success"}}'
+```
+
+### Stop / restore
+
+```bash
+curl -s -X POST http://{host_ip}:9877/api/stop \\
+  -H "Authorization: Bearer {API_KEY}"
+```
+
+## Priority (lower = higher priority)
+
+| Priority | States |
+|----------|--------|
+| 0 (highest) | `error` |
+| 1 | `fetching` |
+| 2 | `executing` |
+| 3 | `writing` |
+| 4 | `reading` |
+| 5 | `querying` |
+| 6 | `thinking` |
+| 7 | `waiting` |
+| 8 | `idle` |
+| 9 | `success` |
+| 99 | `off` |
+
+## Coordination Strategies
+
+- `priority` (default): Highest-priority state across all sessions wins
+- `active`: Only non-idle sessions compete; all idle → lights go idle
+- `carousel`: Rotate between session groups every 3 seconds
+
+Set via: `POST /api/strategy {{"strategy":"active"}}`
+"""
+
 # ═══════════════ 设备连接池 ═══════════════
 
 BULBS_CONFIG_PATH = os.path.expanduser("~/.yeelight-vibe-bridge/bulbs.json")
@@ -570,6 +683,20 @@ class RelayHandler(BaseHTTPRequestHandler):
                 "cube_available": _CUBE_AVAILABLE,
                 "devices": devices,
             })
+
+        elif path == "/api/skill":
+            host_ip = _get_host_ip()
+            markdown = _generate_skill(host_ip)
+            self._send_json({"ok": True, "skill": markdown, "host_ip": host_ip})
+
+        elif path == "/api/skill.md":
+            host_ip = _get_host_ip()
+            markdown = _generate_skill(host_ip)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(markdown.encode("utf-8"))
 
         elif path == "/api/bulb-info":
             """查询第一个连接设备的型号/名称"""

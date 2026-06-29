@@ -453,6 +453,43 @@ def cmd_test(state, ip=None):
         print(f"  ❌ 设置失败: {result.get('error', '未知错误')}")
 
 
+def cmd_show_apikey():
+    """显示 API key（用于局域网设备接入）"""
+    key_file = BRIDGE_DIR / "api-key"
+    if not key_file.exists():
+        print("  ❌ API key 未生成。请先启动 relay:")
+        print(f"    yeelight-bridge start")
+        sys.exit(1)
+    api_key = key_file.read_text("utf-8").strip()
+    host_ip = get_host_ip()
+    print(f"  API Key:    {api_key}")
+    print(f"  Relay URL:  http://{host_ip}:{RELAY_PORT}")
+    print()
+    print(f"  局域网设备使用示例:")
+    print(f'    curl -X POST http://{host_ip}:{RELAY_PORT}/api/direct \\')
+    print(f'      -H "Authorization: Bearer {api_key}" \\')
+    print(f"      -d '{{\"state\":\"thinking\"}}'")
+
+
+def get_host_ip():
+    """Get the primary LAN IP of this host."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        s.connect(("192.168.1.1", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        try:
+            for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+                if ip.startswith("192.168.") or ip.startswith("10."):
+                    return ip
+        except Exception:
+            pass
+    return "127.0.0.1"
+
+
 def cmd_strategy(name):
     """切换协调策略"""
     if name not in ("priority", "active", "carousel"):
@@ -614,6 +651,7 @@ COMMANDS = {
     "setup-bulbs": (cmd_setup_bulbs, "交互式灯泡配置"),
     "test":        (cmd_test,        "直接测试灯光状态 <state> [ip]"),
     "strategy":    (cmd_strategy,    "切换协调策略 <priority|active|carousel>"),
+    "show-apikey": (cmd_show_apikey, "显示 API key 和局域网接入信息"),
     "ensure":      (cmd_ensure,      "确保 relay 在运行（适配器内部调用）"),
 }
 
