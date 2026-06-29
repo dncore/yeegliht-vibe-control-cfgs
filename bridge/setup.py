@@ -154,7 +154,7 @@ def install_bridge():
         "yeelight_cube_lite.py",
         "cube_fonts.py",
         "cube_patterns.py",
-        "bulbs.json",
+        "bulbs.json.example",
     ]
     for fn in runtime_files:
         src = SCRIPT_DIR / fn
@@ -163,8 +163,8 @@ def install_bridge():
             dst.write_bytes(src.read_bytes())
             print(f"  ✓ {fn}")
 
-    # bulbs.json 合并
-    src_bulbs = SCRIPT_DIR / "bulbs.json"
+    # bulbs.json 合并 (模板来自 bulbs.json.example，运行时配置写入 bulbs.json)
+    src_bulbs = SCRIPT_DIR / "bulbs.json.example"
     dst_bulbs = BRIDGE_DIR / "bulbs.json"
     if src_bulbs.exists():
         try:

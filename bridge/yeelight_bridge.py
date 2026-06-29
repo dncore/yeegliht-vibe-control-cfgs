@@ -175,7 +175,7 @@ def cmd_install():
         "yeelight_cube_lite.py",
         "cube_fonts.py",
         "cube_patterns.py",
-        BULBS_FILE_NAME,
+        "bulbs.json.example",
     ]
     for fn in runtime_files:
         src = SCRIPT_DIR / fn
@@ -184,8 +184,8 @@ def cmd_install():
             dst.write_bytes(src.read_bytes())
             print(f"  ✓ 已安装: {fn}")
 
-    # bulbs.json 合并
-    src_bulbs = SCRIPT_DIR / BULBS_FILE_NAME
+    # bulbs.json 合并 (模板来自 bulbs.json.example，运行时配置写入 bulbs.json)
+    src_bulbs = SCRIPT_DIR / "bulbs.json.example"
     dst_bulbs = BRIDGE_DIR / BULBS_FILE_NAME
     if src_bulbs.exists():
         try:

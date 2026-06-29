@@ -1,0 +1,19 @@
+{
+  "_comment": "设备配置文件。将 IP 替换为你的实际设备地址。",
+  "_comment_type": "type 字段: 'bulb' = 标准 Yeelight 灯泡, 'cube_lite' = Cube Smart Lamp Lite, 'auto' = 自动探测",
+  "default": "bulb_1",
+  "bulbs": [
+    {
+      "id": "bulb_1",
+      "name": "Yeelight Bulb-1",
+      "ip": "192.168.x.x",
+      "type": "bulb"
+    },
+    {
+      "id": "bulb_2",
+      "name": "Yeelight Cube Lite-1",
+      "ip": "192.168.x.x",
+      "type": "cube_lite"
+    }
+  ]
+}

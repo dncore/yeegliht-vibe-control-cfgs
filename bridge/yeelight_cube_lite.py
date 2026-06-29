@@ -14,7 +14,7 @@ FX mode expires ~25s after activation. Must be refreshed periodically.
 Only ONE TCP connection at a time — Cube firmware crashes on concurrent connections.
 
 Usage:
-    controller = CubeLiteController("192.168.2.205")
+    controller = CubeLiteController("<cube-ip>")
     await controller.connect()
     await controller.apply_state("thinking")
     await controller.close()
