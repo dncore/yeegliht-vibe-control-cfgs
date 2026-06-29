@@ -27,7 +27,14 @@ import { homedir } from "node:os";
 
 const BRIDGE_DIR = join(homedir(), ".yeelight-vibe-bridge");
 const RELAY_PORT = 9877;
-const RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`;
+const RELAY_URL = process.env.YEELIGHT_RELAY_URL || `http://127.0.0.1:${RELAY_PORT}`;
+const API_KEY = process.env.YEELIGHT_API_KEY || "";
+
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (API_KEY) h["Authorization"] = `Bearer ${API_KEY}`;
+  return h;
+}
 
 // ═══════════════ 数据模型 ═══════════════
 
@@ -73,7 +80,7 @@ async function bridgePost(path: string, data: Record<string, unknown>): Promise<
   try {
     const resp = await fetch(`${RELAY_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify(data),
     });
     const d = await resp.json();
@@ -223,7 +230,7 @@ async function openStateTester(ctx: any): Promise<void> {
           applying = true; cW = undefined; cL = undefined; tui.requestRender();
           fetch(`${RELAY_URL}/api/direct`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders(),
             body: JSON.stringify({ state: it.id }),
           })
             .then(r => r.json())
@@ -302,7 +309,7 @@ async function runSetup(ctx: any): Promise<void> {
       }
       ctx.ui.setStatus("yeelight", "扫描中...");
       try {
-        const resp = await fetch(`${RELAY_URL}/api/discover`, { method: "POST", body: "{}" });
+        const resp = await fetch(`${RELAY_URL}/api/discover`, { method: "POST", headers: authHeaders(), body: "{}" });
         const data = await resp.json();
         if (!data.ok) { ctx.ui.notify(`扫描失败: ${data.error}`, "error"); continue; }
         if (!data.bulbs || data.bulbs.length === 0) {

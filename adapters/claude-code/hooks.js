@@ -2,9 +2,14 @@
 /**
  * Yeelight Vibe Bridge — Claude Code adapter (Node.js, production)
  * ~150ms end-to-end. Reads stdin event, POSTs state to bridge relay.
+ *
+ * Remote usage (LAN): set env vars to point at another machine's bridge.
+ *   YEELIGHT_RELAY_URL=http://192.168.x.x:9877
+ *   YEELIGHT_API_KEY=<api-key>
  */
 const http = require("http");
-const BRIDGE = "http://127.0.0.1:9877";
+const BRIDGE = process.env.YEELIGHT_RELAY_URL || "http://127.0.0.1:9877";
+const API_KEY = process.env.YEELIGHT_API_KEY || "";
 const READ = new Set(["Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"]);
 const WRITE = new Set(["Write","Edit","NotebookEdit"]);
 const EXEC = new Set(["Bash","PowerShell"]);
@@ -12,9 +17,13 @@ const WEB = new Set(["WebSearch","WebFetch"]);
 const WEB_KW = ["curl","wget","http ","fetch","npx ","npm ","pip "];
 
 function post(path, data) {
-  try { http.request(BRIDGE + path, {
-    method: "POST", headers: { "Content-Type": "application/json" }, timeout: 300
-  }).end(JSON.stringify(data)); } catch (_) {}
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (API_KEY) headers["Authorization"] = `Bearer ${API_KEY}`;
+    http.request(BRIDGE + path, {
+      method: "POST", headers, timeout: 300
+    }).end(JSON.stringify(data));
+  } catch (_) {}
 }
 
 function readStdin() {

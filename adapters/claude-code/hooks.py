@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Claude Code hook → bridge relay. Minimal imports for fast startup on Windows."""
+"""Claude Code hook → bridge relay. Minimal imports for fast startup on Windows.
+
+Remote usage (LAN): set env vars to point at another machine's bridge.
+  YEELIGHT_RELAY_URL=http://192.168.x.x:9877
+  YEELIGHT_API_KEY=<api-key>
+"""
 import json, sys, os, time
 from urllib.request import Request, urlopen
 
-BRIDGE = "http://127.0.0.1:9877"
+BRIDGE = os.environ.get("YEELIGHT_RELAY_URL", "http://127.0.0.1:9877")
+API_KEY = os.environ.get("YEELIGHT_API_KEY", "")
 LOG = os.path.expanduser("~/.yeelight-vibe-bridge/hook_debug.log")
 READ_TOOLS = {"Read","LS","Grep","Glob","Task","TodoRead","NotebookRead"}
 WRITE_TOOLS = {"Write","Edit","NotebookEdit"}
@@ -16,6 +22,8 @@ def post(path, data):
         body = json.dumps(data).encode()
         req = Request(f"{BRIDGE}{path}", data=body, method="POST")
         req.add_header("Content-Type", "application/json")
+        if API_KEY:
+            req.add_header("Authorization", f"Bearer {API_KEY}")
         urlopen(req, timeout=0.3)
         with open(LOG, "a") as f:
             f.write(f"[{time.time():.0f}] {path} {data.get('state','?')} OK\n")
