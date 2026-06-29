@@ -28,6 +28,10 @@
 
 ## 架构
 
+### 本地模式（单机）
+
+Bridge relay 和 agent 在同一台机器。
+
 ```
                       ┌─────────────────────────────────┐
                       │  ~/.yeelight-vibe-bridge/        │  ← 公共桥接层
@@ -36,7 +40,7 @@
                       │  ├── yeelight_discover.py        │
                       │  └── bulbs.json                  │
                       └──────────┬──────────────────────┘
-                                 │ HTTP (:9877)
+                                 │ HTTP (127.0.0.1:9877)
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
               ┌──────────┐ ┌──────────┐ ┌──────────┐
@@ -44,6 +48,39 @@
               │ Code     │ │          │ │  智能体  │     (各自安装)
               └──────────┘ └──────────┘ └──────────┘
 ```
+
+### LAN 模式（分布式）
+
+一台机器运行 bridge relay（连接灯泡），局域网内其他机器的 AI agent 通过 HTTP 调用。
+
+```
+  ┌─────────────────────┐
+  │  Bridge 主机         │  ← 运行 yeelight_relay.py
+  │  ~/.yeelight-vibe-  │     连接灯泡
+  │    bridge/           │
+  │  bulbs.json          │
+  └────────┬────────────┘
+           │ HTTP (192.168.x.x:9877)
+           │ Auth: Bearer <api-key>
+  ┌────────┼────────────┐
+  ▼        ▼            ▼
+┌──────┐ ┌──────┐ ┌──────────┐
+│Claude│ │  Pi  │ │  (其他   │  ← LAN 客户端
+│ Code │ │Agent │ │   agent) │     设置 RELAY_URL + API_KEY
+└──────┘ └──────┘ └──────────┘
+```
+
+LAN 模式配置：设置 `YEELIGHT_RELAY_URL` 和 `YEELIGHT_API_KEY` 环境变量。
+Hook 脚本检测到这两个变量后自动切换为远程模式，带上 `Authorization` header。
+不设则保持本地行为。
+
+| 变量 | 默认值 | LAN 必需 |
+|------|--------|---------|
+| `YEELIGHT_RELAY_URL` | `http://127.0.0.1:9877` | ✅ |
+| `YEELIGHT_API_KEY` | (空) | ✅ |
+
+> **macOS Claude Code**：GUI 应用不继承 shell 环境变量。需写入
+> `~/.claude/settings.json` → `env` 段。详见 [适配器 README](./adapters/claude-code/README.md)。
 
 ### 设计原则
 
@@ -260,6 +297,8 @@ yeelight-vibe-bridge/
 | 灯泡型号显示 "unknown" | 灯泡固件不返回型号；可通过 DNS 主机名推断 |
 | Claude Code hook 延迟数秒 | Node.js 版适配器最快 (~150ms)；确保用的 hooks.js |
 | 确认对话框时灯不变 | Claude Code 不发送权限确认的 hook 事件；灯显示工具状态（如橙色呼吸） |
+| LAN 模式 hook 报 Connection refused | macOS：环境变量必须写在 `~/.claude/settings.json` 的 `env` 段，不能只写 `.zshrc` — GUI 应用不继承 shell 环境变量 |
+| LAN 模式 API key 被拒 | 在 bridge 主机运行 `yeelight-bridge show-apikey` 获取正确密钥 |
 
 ## 许可证
 

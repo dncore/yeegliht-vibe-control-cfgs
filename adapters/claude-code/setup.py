@@ -8,12 +8,23 @@ Yeelight Vibe Bridge — Claude Code 适配器安装
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 BRIDGE_DIR = Path.home() / ".yeelight-vibe-bridge"
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
+
+
+def merge_hooks(existing_hooks, new_hooks):
+    """Merge new hook matchers into existing hooks dict. Preserves non-yeelight hooks."""
+    merged = dict(existing_hooks)
+    for event, matchers in new_hooks.items():
+        if event not in merged:
+            merged[event] = []
+        merged[event].extend(matchers)
+    return merged
 
 
 def main():
@@ -40,28 +51,29 @@ def main():
 
     # 生成 hooks 配置
     hooks_path = dst_hooks.as_posix()
+    python = sys.executable or "python3"
     hooks_config = {
         "UserPromptSubmit": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" user_prompt'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" user_prompt'}]
         }],
         "PreToolUse": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" pre_tool'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" pre_tool'}]
         }],
         "PostToolUse": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" post_tool'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" post_tool'}]
         }],
         "Stop": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" stop'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" stop'}]
         }],
         "SubagentStop": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" subagent_stop'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" subagent_stop'}]
         }],
         "Notification": [{
-            "hooks": [{"type": "command", "command": f'python "{hooks_path}" notification'}]
+            "hooks": [{"type": "command", "command": f'{python} "{hooks_path}" notification'}]
         }],
     }
 
-    # 合并到 ~/.claude/settings.json
+    # 读取现有 settings.json
     existing = {}
     if CLAUDE_SETTINGS.exists():
         try:
@@ -69,20 +81,42 @@ def main():
         except json.JSONDecodeError:
             print(f"  ⚠ {CLAUDE_SETTINGS} 格式错误，将创建新文件")
 
-    existing["hooks"] = hooks_config
+    # 合并 hooks（保留已有的非 yeelight hooks）
+    existing["hooks"] = merge_hooks(existing.get("hooks", {}), hooks_config)
+
+    # LAN 模式检测：读取当前环境变量
+    relay_url = os.environ.get("YEELIGHT_RELAY_URL", "")
+    api_key = os.environ.get("YEELIGHT_API_KEY", "")
+
+    if relay_url:
+        print()
+        print(f"  🌐 检测到 LAN 模式: YEELIGHT_RELAY_URL={relay_url}")
+        existing.setdefault("env", {})
+        existing["env"]["YEELIGHT_RELAY_URL"] = relay_url
+        if api_key:
+            existing["env"]["YEELIGHT_API_KEY"] = api_key
+            print(f"  🔑 API_KEY: {'*' * 8}（已写入）")
+        print(f"  💡 环境变量已写入 settings.json 的 env 段")
+    else:
+        print()
+        print(f"  🏠 本地模式（默认连接 127.0.0.1:9877）")
+        print(f"  💡 LAN 模式: 先 export YEELIGHT_RELAY_URL + YEELIGHT_API_KEY，再运行 setup.py")
+
+    # 写入 settings.json
     CLAUDE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     CLAUDE_SETTINGS.write_text(
         json.dumps(existing, indent=2, ensure_ascii=False), "utf-8"
     )
 
-    print(f"  ✓ hooks 配置已写入 {CLAUDE_SETTINGS}")
+    print()
+    print(f"  ✓ hooks 配置已合并到 {CLAUDE_SETTINGS}")
     print(f"    共 6 个 hook 事件:")
     print(f"      UserPromptSubmit → 🧠 thinking")
     print(f"      PreToolUse       → 🟡 waiting / 工具状态")
     print(f"      PostToolUse      → ✅ thinking / 🔴 error")
     print(f"      Stop             → 🟢 success")
     print(f"      SubagentStop     → 🧠 thinking")
-    print(f"      Notification     → — (维持 relay)")
+    print(f"      Notification     → —（维持 relay）")
     print()
     print("=" * 55)
     print("  ✅ Claude Code 适配器安装完成！")

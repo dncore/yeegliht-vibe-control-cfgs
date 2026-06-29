@@ -3,6 +3,7 @@
   "_instructions": "运行 python setup.py 自动完成配置。",
   "_prerequisite": "先安装 bridge 公共核心: cd ../../bridge && python setup.py",
   "_architecture": "hooks.py 是薄适配器，仅转换事件 → HTTP → bridge relay。所有灯泡控制逻辑在 ~/.yeelight-vibe-bridge/",
+  "_lan_mode": "LAN 模式下在 ~/.claude/settings.json 的 env 段设置 YEELIGHT_RELAY_URL 和 YEELIGHT_API_KEY，详见 README",
   "hooks": {
     "UserPromptSubmit": [{
       "hooks": [{

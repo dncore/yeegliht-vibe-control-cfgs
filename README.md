@@ -32,6 +32,10 @@
 
 ## Architecture
 
+### Local Mode (single machine)
+
+Bridge relay and agent run on the same machine.
+
 ```
                       ┌─────────────────────────────────┐
                       │  ~/.yeelight-vibe-bridge/        │  ← bridge core
@@ -40,7 +44,7 @@
                       │  ├── yeelight_discover.py        │
                       │  └── bulbs.json                  │
                       └──────────┬──────────────────────┘
-                                 │ HTTP (:9877)
+                                 │ HTTP (127.0.0.1:9877)
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
               ┌──────────┐ ┌──────────┐ ┌──────────┐
@@ -48,6 +52,39 @@
               │ Code     │ │          │ │  agents) │     (optional)
               └──────────┘ └──────────┘ └──────────┘
 ```
+
+### LAN Mode (distributed)
+
+One machine runs the bridge relay (connected to bulbs). LAN clients POST states to it via HTTP.
+
+```
+  ┌─────────────────────┐
+  │  Bridge Machine      │  ← runs yeelight_relay.py
+  │  ~/.yeelight-vibe-  │     connected to bulbs
+  │    bridge/           │
+  │  bulbs.json          │
+  └────────┬────────────┘
+           │ HTTP (192.168.x.x:9877)
+           │ Auth: Bearer <api-key>
+  ┌────────┼────────────┐
+  ▼        ▼            ▼
+┌──────┐ ┌──────┐ ┌──────────┐
+│Claude│ │  Pi  │ │ (other   │  ← LAN clients
+│ Code │ │Agent │ │  agents) │     set RELAY_URL + API_KEY
+└──────┘ └──────┘ └──────────┘
+```
+
+LAN mode setup: set `YEELIGHT_RELAY_URL` and `YEELIGHT_API_KEY` env vars.
+Hook scripts auto-detect LAN mode when these vars are present and add the
+`Authorization` header. Omit them to keep local mode behavior.
+
+| Variable | Default | Required for LAN |
+|----------|---------|-----------------|
+| `YEELIGHT_RELAY_URL` | `http://127.0.0.1:9877` | ✅ |
+| `YEELIGHT_API_KEY` | (none) | ✅ |
+
+> **macOS Claude Code**: GUI app doesn't inherit shell env vars. Put them in
+> `~/.claude/settings.json` → `env` section. See [adapter README](./adapters/claude-code/README.md).
 
 ### Design Principles
 
@@ -269,6 +306,8 @@ yeelight-vibe-bridge/
 | Bulb model shows "unknown" | Bulb firmware doesn't report model via `get_properties()`; model extracted from DNS hostname if available |
 | Claude Code hook takes seconds | Node.js adapter is fastest (~150ms); ensure hooks.js is used, not hooks.py |
 | Light doesn't change on permission dialog | Claude Code doesn't send hook events for permission dialogs; light shows tool state (e.g. orange breathe for executing) |
+| LAN mode hook logs "Connection refused" | macOS: env vars must go in `~/.claude/settings.json` → `env` section, NOT just `.zshrc` — GUI apps don't inherit shell env |
+| LAN mode API key rejected | Run `yeelight-bridge show-apikey` on the bridge machine to get the correct key |
 
 ## License
 
