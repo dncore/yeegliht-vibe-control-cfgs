@@ -475,6 +475,26 @@ def aggregate(data):
     return best
 
 
+# ═══════════════ API Key ═══════════════
+
+API_KEY_PATH = os.path.expanduser("~/.yeelight-vibe-bridge/api-key")
+
+def _load_or_create_api_key():
+    """Load API key from disk, or create one on first run."""
+    try:
+        with open(API_KEY_PATH) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        import secrets
+        key = secrets.token_urlsafe(24)
+        os.makedirs(os.path.dirname(API_KEY_PATH), exist_ok=True)
+        with open(API_KEY_PATH, "w") as f:
+            f.write(key + "\n")
+        print(f"[relay] 已生成 API key: {API_KEY_PATH}")
+        return key
+
+API_KEY = _load_or_create_api_key()
+
 # ═══════════════ Cleanup ═══════════════
 
 def _cleanup():
@@ -497,6 +517,22 @@ class RelayHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # 静默
 
+    def _is_localhost(self):
+        """Check if the request came from localhost."""
+        client_ip = self.client_address[0]
+        return client_ip in ("127.0.0.1", "::1", "localhost")
+
+    def _check_auth(self):
+        """Verify Bearer token for non-localhost requests. Returns True if authorized."""
+        if self._is_localhost():
+            return True
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+            if token == API_KEY:
+                return True
+        return False
+
     def _send_json(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -508,7 +544,7 @@ class RelayHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self):
@@ -574,6 +610,11 @@ class RelayHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):
+        # Auth check: localhost bypasses, remote requires Bearer token
+        if not self._check_auth():
+            self._send_json({"ok": False, "error": "unauthorized"}, 401)
+            return
+
         path = urlparse(self.path).path
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
