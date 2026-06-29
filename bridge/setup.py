@@ -151,6 +151,9 @@ def install_bridge():
         "yeelight_relay.py",
         "yeelight_discover.py",
         "yeelight_bridge.py",
+        "yeelight_cube_lite.py",
+        "cube_fonts.py",
+        "cube_patterns.py",
         "bulbs.json",
     ]
     for fn in runtime_files:

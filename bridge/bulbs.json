@@ -1,10 +1,23 @@
 {
-  "default": "bulb_1921682131",
+  "default": "bulb_19216812152",
   "bulbs": [
+    {
+      "id": "bulb_19216812152",
+      "name": "Yeelight Cube Lite-192.168.12.152",
+      "ip": "192.168.12.152",
+      "type": "cube_lite"
+    },
+    {
+      "id": "bulb_19216812220",
+      "name": "Yeelight Color Bulb-192.168.12.220",
+      "ip": "192.168.12.220",
+      "type": "bulb"
+    },
     {
       "id": "bulb_1921682131",
       "name": "Yeelight Cube-192.168.2.131",
-      "ip": "192.168.2.131"
+      "ip": "192.168.2.131",
+      "type": "bulb"
     }
   ]
 }

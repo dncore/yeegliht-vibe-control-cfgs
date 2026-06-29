@@ -212,20 +212,17 @@ def cmd_install():
 
 
 def cmd_start(ip=None):
-    """启动 relay 守护进程"""
+    """启动 relay 守护进程（设备列表从 bulbs.json 读取）"""
     # 已经在运行？
     if is_relay_running():
         info = relay_request("/api/health")
-        print(f"  ✓ relay 已在运行 (灯泡: {info.get('bulb_ip', '?')})")
+        devices = info.get("devices", [])
+        if devices:
+            device_list = ", ".join(f"{d.get('ip', '?')} [{d.get('type', '?')}]" for d in devices)
+            print(f"  ✓ relay 已在运行 (设备: {device_list})")
+        else:
+            print(f"  ✓ relay 已在运行")
         return
-
-    # 确定灯泡 IP
-    if not ip:
-        bulb = get_default_bulb()
-        if not bulb:
-            print("  ❌ 未配置灯泡。请先运行: python yeelight_bridge.py setup-bulbs")
-            sys.exit(1)
-        ip = bulb["ip"]
 
     relay_script = BRIDGE_DIR / RELAY_SCRIPT_NAME
     if not relay_script.exists():
@@ -235,10 +232,10 @@ def cmd_start(ip=None):
 
     kill_relay_process()
 
-    print(f"  启动 relay (IP={ip}, 端口={RELAY_PORT})...")
+    print(f"  启动 relay (端口={RELAY_PORT}, 设备列表从 bulbs.json 读取)...")
     try:
         proc = subprocess.Popen(
-            [PYTHON_CMD, str(relay_script), str(RELAY_PORT), ip],
+            [PYTHON_CMD, str(relay_script), str(RELAY_PORT)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
@@ -284,11 +281,19 @@ def cmd_status():
     print(f"  relay 运行: {'✅ 是' if info.get('ok') else '❌ 否'}")
     if info.get("ok"):
         print(f"  yeelight 包: {'✅' if health.get('yeelight_available') else '❌'}")
-        print(f"  设备类型:   {'🧊 Cube Lite' if health.get('device_type') == 'cube_lite' else '💡 标准灯泡'}")
-        print(f"  灯泡连接:   {'✅' if health.get('bulb_connected') else '❌'}")
-        print(f"  灯泡 IP:    {health.get('bulb_ip', '?')}")
         print(f"  活跃会话:   {info.get('sessions', 0)}")
         print(f"  协调策略:   {info.get('strategy', '?')}")
+        print()
+        devices = health.get("devices", [])
+        if devices:
+            print(f"  设备 ({info.get('devices_connected', 0)}/{info.get('devices_total', 0)} 已连接):")
+            for d in devices:
+                status_icon = "✅" if d.get("connected") else "❌"
+                type_icon = "🧊 Cube Lite" if d.get("type") == "cube_lite" else "💡 标准灯泡"
+                print(f"    {status_icon} {d.get('name', d.get('ip', '?'))}")
+                print(f"       IP: {d.get('ip', '?')}  类型: {type_icon}")
+        else:
+            print("  无设备配置")
     print("=" * 45)
 
 
@@ -434,17 +439,10 @@ def cmd_setup_bulbs():
 
 
 def cmd_test(state, ip=None):
-    """直接测试灯光状态（支持 Cube Lite）"""
-    if not ip:
-        bulb = get_default_bulb()
-        if not bulb:
-            print("  ❌ 未配置灯泡")
-            sys.exit(1)
-        ip = bulb["ip"]
-
+    """直接测试灯光状态（广播到所有设备）"""
     if not is_relay_running():
         print("  relay 未运行，正在启动...")
-        cmd_start(ip)
+        cmd_start()
         time.sleep(1)
 
     result = relay_request("/api/direct", {"state": state})
@@ -474,12 +472,6 @@ def cmd_ensure(ip=None):
     if is_relay_running():
         return True
 
-    if not ip:
-        bulb = get_default_bulb()
-        if not bulb:
-            return False
-        ip = bulb["ip"]
-
     relay_script = BRIDGE_DIR / RELAY_SCRIPT_NAME
     if not relay_script.exists():
         return False
@@ -487,7 +479,7 @@ def cmd_ensure(ip=None):
     kill_relay_process()
     try:
         proc = subprocess.Popen(
-            [PYTHON_CMD, str(relay_script), str(RELAY_PORT), ip],
+            [PYTHON_CMD, str(relay_script), str(RELAY_PORT)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,

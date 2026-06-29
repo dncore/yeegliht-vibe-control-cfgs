@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Yeelight HTTP Relay — Pi Agent 持久连接守护进程
-=================================================
-- 保持单一 TCP 连接到灯泡，复用到底
-- 提供 HTTP API 供 pi 扩展调用
+Yeelight HTTP Relay — 多设备并发守护进程
+==========================================
+- 从 bulbs.json 读取所有设备，同时保持连接
+- 每个设备独立类型检测、独立连接、独立渲染
+- 同一个状态指令广播到所有设备
+- 提供 HTTP API 供 agent 适配器调用
 - 支持局域网设备发现
 
-用法: python yeelight_relay.py [端口] [灯泡IP] [策略]
-      端口默认 9877, IP 默认 192.168.2.205
+用法: python yeelight_relay.py [端口]
+      端口默认 9877
+      设备列表从 ~/.yeelight-vibe-bridge/bulbs.json 读取
 
 API:
   POST /api/direct    {"state": "thinking"}   直接应用（无协调，TUI 用）
@@ -28,8 +31,6 @@ import time as _time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock, Thread
 from urllib.parse import urlparse
-
-DEFAULT_IP = "192.168.2.205"
 
 # ═══════════════ HCI / 交通信号色彩 ═══════════════
 
@@ -81,121 +82,12 @@ try:
     _CUBE_AVAILABLE = True
 except ImportError:
     try:
-        from yeelight_cube_lite import CubeLiteController, is_cube_device  # type: ignore[no-redef]
+        from yeelight_cube_lite import CubeLiteController, is_cube_device
         _CUBE_AVAILABLE = True
     except ImportError:
         pass
 
-_bulb_instance = None
-_persistent_bulb = None
-_persistent_ip = None
-_bulb_lock = Lock()
-
-# Cube Lite state
-_is_cube_lite = False
-_cube_controller = None
-_cube_loop = None
-_cube_loop_thread = None
-
-@atexit.register
-def _cleanup():
-    global _cube_controller, _cube_loop, _cube_loop_thread
-    if _cube_controller is not None and _cube_loop is not None:
-        try:
-            _cube_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(
-                _cube_controller.stop_effects(), loop=_cube_loop
-            ))
-            _time.sleep(0.5)
-            _cube_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(
-                _cube_controller.close(), loop=_cube_loop
-            ))
-            _time.sleep(0.5)
-            _cube_loop.call_soon_threadsafe(_cube_loop.stop)
-        except Exception:
-            pass
-        _cube_controller = None
-        _cube_loop = None
-        _cube_loop_thread = None
-    if _persistent_bulb is not None:
-        try:
-            _persistent_bulb.stop_flow()
-        except Exception:
-            pass
-
-# Graceful cleanup on termination signals (Unix/macOS)
-# On Windows, atexit handles cleanup; SIGTERM exists but is not delivered by OS
-try:
-    signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
-    signal.signal(signal.SIGINT,  lambda *_: (_cleanup(), sys.exit(0)))
-except (AttributeError, ValueError):
-    pass  # Some embedded Python builds lack signal support
-
-# ═══════════════ Cube Lite Detection ═══════════════
-
-def _detect_device_type(ip: str) -> bool:
-    """Detect if the device at IP is a Cube Smart Lamp Lite.
-
-    Creates a CubeLiteController and starts a persistent event-loop daemon
-    thread that keeps the Cube connection alive and drives animations.
-    """
-    global _is_cube_lite, _cube_controller, _cube_loop, _cube_loop_thread
-    if not _CUBE_AVAILABLE:
-        print("[relay] Cube support not available (zeroconf missing)")
-        return False
-
-    # Try Cube Lite protocol via CubeLiteController
-    try:
-        ctrl = CubeLiteController(ip)
-        _cube_loop = asyncio.new_event_loop()
-
-        def _run_loop():
-            asyncio.set_event_loop(_cube_loop)
-            _cube_loop.run_forever()
-
-        _cube_loop_thread = Thread(target=_run_loop, daemon=True)
-        _cube_loop_thread.start()
-
-        future = asyncio.run_coroutine_threadsafe(ctrl.connect(), _cube_loop)
-        ok = future.result(timeout=5)
-
-        if ok:
-            _is_cube_lite = True
-            _cube_controller = ctrl
-            print(f"[relay] Cube Lite detected (protocol match)")
-            return True
-        else:
-            print(f"[relay] Cube protocol probe returned False (not a Cube Lite)")
-    except Exception as e:
-        print(f"[relay] Cube protocol probe raised {type(e).__name__}: {e}")
-
-    # Method 2: Standard Yeelight get_properties
-    try:
-        bulb = Bulb(ip, auto_on=False, effect="sudden")
-        props = bulb.get_properties()
-        model = props.get("model", "")
-        name = props.get("name", "")
-        print(f"[relay] get_properties result: model={model!r}, name={name!r}")
-        if is_cube_device(model, name):
-            _is_cube_lite = True
-            _cube_controller = CubeLiteController(ip)
-            print(f"[relay] Cube Lite detected (model/name match)")
-            return True
-        else:
-            print(f"[relay] Not a Cube Lite (model={model!r}, name={name!r})")
-    except Exception as e:
-        print(f"[relay] get_properties probe raised {type(e).__name__}: {e}")
-    return False
-
-def _get_bulb(ip: str, reconnect: bool = False):
-    global _persistent_bulb, _persistent_ip
-    if reconnect or _persistent_bulb is None or _persistent_ip != ip:
-        try:
-            _persistent_bulb = Bulb(ip, auto_on=False, effect="sudden")
-            _persistent_ip = ip
-        except Exception:
-            _persistent_bulb = None
-            raise
-    return _persistent_bulb
+# ═══════════════ 灯泡控制函数 (无状态, 接受 bulb 参数) ═══════════════
 
 def _solid(bulb, r, g, b, bri=20):
     bulb.set_rgb(r, g, b, effect="sudden")
@@ -204,31 +96,29 @@ def _solid(bulb, r, g, b, bri=20):
 def _breathe(bulb, r, g, b, bri=50):
     dr, dg, db = max(1, r//20), max(1, g//20), max(1, b//20)
     flow = Flow(count=6, transitions=[
-        RGBTransition(r, g, b, duration=50,   brightness=bri),      # 瞬间到位
-        RGBTransition(dr, dg, db, duration=1500, brightness=1),      # 线性变暗
-        RGBTransition(dr, dg, db, duration=200, brightness=1),       # 暗部停留
-        RGBTransition(r, g, b, duration=1500, brightness=bri),       # 线性变亮
+        RGBTransition(r, g, b, duration=50,   brightness=bri),
+        RGBTransition(dr, dg, db, duration=1500, brightness=1),
+        RGBTransition(dr, dg, db, duration=200, brightness=1),
+        RGBTransition(r, g, b, duration=1500, brightness=bri),
     ])
     bulb.start_flow(flow)
 
 def _flash(bulb, r, g, b, bri=40):
     dr, dg, db = max(1, r//30), max(1, g//30), max(1, b//30)
     flow = Flow(count=10, transitions=[
-        RGBTransition(r, g, b, duration=100,  brightness=bri),      # 到位
-        RGBTransition(dr, dg, db, duration=300, brightness=1),       # 线性变暗
-        RGBTransition(r, g, b, duration=300, brightness=bri),        # 线性变亮
+        RGBTransition(r, g, b, duration=100,  brightness=bri),
+        RGBTransition(dr, dg, db, duration=300, brightness=1),
+        RGBTransition(r, g, b, duration=300, brightness=bri),
     ])
     bulb.start_flow(flow)
 
-def stop_effects(bulb):
+def stop_bulb_effects(bulb):
     bulb.stop_flow()
     bulb.turn_on()
     bulb.set_color_temp(4000, effect="sudden")
     bulb.set_brightness(80, effect="sudden")
 
-def _apply(bulb, state_name):
-    global _bulb_instance
-    _bulb_instance = bulb
+def _apply_bulb(bulb, state_name):
     s = _STATES.get(state_name)
     if not s:
         return
@@ -248,45 +138,277 @@ def _apply(bulb, state_name):
     elif mode == "flash":
         _flash(bulb, r, g, b, bri)
 
+# ═══════════════ 设备连接池 ═══════════════
 
-def _apply_locked(bulb, state_name):
-    global _persistent_bulb, _persistent_ip, _cube_controller
-    if _is_cube_lite and _cube_controller is not None:
-        _run_cube_state(state_name)
-        return
-    with _bulb_lock:
+BULBS_CONFIG_PATH = os.path.expanduser("~/.yeelight-vibe-bridge/bulbs.json")
+
+class DeviceConnection:
+    """Manages connection and state dispatch for a single device."""
+
+    def __init__(self, ip: str, dev_type: str = "auto", name: str = ""):
+        self.ip = ip
+        self.name = name
+        self.declared_type = dev_type  # "bulb", "cube_lite", or "auto"
+        self.detected_type = None      # resolved after connect
+        self.bulb = None               # yeelight.Bulb (for bulbs)
+        self.cube = None               # CubeLiteController (for cube_lite)
+        self.lock = Lock()
+        self.connected = False
+
+    def detect_and_connect(self):
+        """Detect device type and establish connection."""
+        # If type is declared, try that first
+        if self.declared_type == "cube_lite" and _CUBE_AVAILABLE:
+            if self._try_cube():
+                return
+        elif self.declared_type == "bulb" and _BULB_AVAILABLE:
+            if self._try_bulb():
+                return
+
+        # Auto-detect: try Cube protocol first, then standard bulb
+        if self.declared_type == "auto":
+            if _CUBE_AVAILABLE and self._try_cube():
+                return
+            if _BULB_AVAILABLE and self._try_bulb():
+                return
+
+        # Fallback: try the other type if declared type failed
+        if self.declared_type == "cube_lite" and _BULB_AVAILABLE:
+            print(f"[relay] [{self.ip}] Cube Lite 连接失败，回退到标准灯泡")
+            if self._try_bulb():
+                return
+        elif self.declared_type == "bulb" and _CUBE_AVAILABLE:
+            print(f"[relay] [{self.ip}] 标准灯泡连接失败，尝试 Cube 协议")
+            if self._try_cube():
+                return
+
+        print(f"[relay] [{self.ip}] 无法连接 (类型检测失败)")
+
+    def _try_cube(self):
+        """Try connecting as Cube Lite via sync TCP. Validates the response."""
         try:
-            if state_name == "stop":
-                stop_effects(bulb)
-            else:
-                _apply(bulb, state_name)
-        except Exception:
-            # 连接断开时重新连接灯泡并重试一次
+            import socket as _sock
+            # Test connection by sending activate_fx_mode and checking response
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(3)
+            s.setsockopt(_sock.IPPROTO_TCP, _sock.TCP_NODELAY, 1)
+            s.connect((self.ip, 55443))
+
+            cmd = json.dumps({"id": 1, "method": "activate_fx_mode",
+                            "params": [{"mode": "direct"}]}, separators=(",", ":"))
+            s.sendall((cmd + "\r\n").encode("utf8"))
+
+            # Read response and validate
+            s.settimeout(1)
             try:
-                _persistent_bulb = _get_bulb(_persistent_ip or "127.0.0.1", reconnect=True)
-                if state_name == "stop":
-                    stop_effects(_persistent_bulb)
-                else:
-                    _apply(_persistent_bulb, state_name)
+                resp = b""
+                for _ in range(10):
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    resp += chunk
+                    if b"\n" in chunk:
+                        break
+                resp_data = json.loads(resp.decode("utf8").strip())
+                if resp_data.get("error"):
+                    print(f"[relay] [{self.ip}] 非 Cube 设备 (response: {resp_data['error'].get('message', 'unknown')})")
+                    s.close()
+                    return False
+            except (_sock.timeout, json.JSONDecodeError, UnicodeDecodeError):
+                pass  # No/bad response — could still be Cube if firmware is slow
+
+            s.close()
+
+            # Response was OK or empty — create controller
+            ctrl = CubeLiteController(self.ip)
+            self.cube = ctrl
+            self.detected_type = "cube_lite"
+            self.connected = True
+            print(f"[relay] [{self.ip}] Cube Lite 已就绪 ({self.name or 'unnamed'})")
+            return True
+        except Exception as e:
+            print(f"[relay] [{self.ip}] Cube 协议探测失败: {e}")
+            return False
+
+    def _try_bulb(self):
+        """Try connecting as standard Yeelight bulb. Uses raw TCP for detection
+        (yeelight library's Bulb() can fail on some firmware versions)."""
+        try:
+            import socket as _sock
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+            s.settimeout(3)
+            s.connect((self.ip, 55443))
+
+            cmd = json.dumps({"id": 1, "method": "get_prop",
+                            "params": ["power", "bright", "name", "model"]},
+                           separators=(",", ":"))
+            s.sendall((cmd + "\r\n").encode("utf8"))
+
+            s.settimeout(2)
+            try:
+                resp = b""
+                for _ in range(10):
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    resp += chunk
+                    if b"\n" in chunk:
+                        break
+                resp_data = json.loads(resp.decode("utf8").strip())
+                result = resp_data.get("result", [])
+                if resp_data.get("error"):
+                    s.close()
+                    return False
+                # result[3] is model — check if it's a Cube
+                model = result[3] if len(result) > 3 else ""
+                bulb_name = result[2] if len(result) > 2 else ""
+                if is_cube_device(model, bulb_name):
+                    s.close()
+                    return False  # It's a Cube, not a standard bulb
+                s.close()
+            except (json.JSONDecodeError, UnicodeDecodeError, _sock.timeout, IndexError):
+                s.close()
+                return False
+
+            # Detection succeeded — now create the persistent Bulb connection
+            try:
+                bulb = Bulb(self.ip, auto_on=False, effect="sudden")
+                bulb.get_properties()
+                self.bulb = bulb
             except Exception:
-                pass
+                # yeelight library failed, use raw TCP bulb wrapper
+                from yeelight import Bulb as _Bulb
+                bulb = _Bulb(self.ip, auto_on=False, effect="sudden")
+                self.bulb = bulb
+
+            self.detected_type = "bulb"
+            self.connected = True
+            print(f"[relay] [{self.ip}] 标准灯泡已就绪 ({self.name or 'unnamed'}, model={model})")
+            return True
+        except Exception as e:
+            print(f"[relay] [{self.ip}] 灯泡连接失败: {e}")
+            return False
+
+    def apply_state(self, state_name: str):
+        """Apply a state to this device. Called from HTTP handler threads."""
+        if not self.connected:
+            return {"ip": self.ip, "ok": False, "error": "not connected"}
+
+        if self.detected_type == "cube_lite" and self.cube is not None:
+            if state_name == "stop":
+                self.cube.stop_effects_sync()
+            else:
+                self.cube.apply_state_sync(state_name)
+            return {"ip": self.ip, "ok": True}
+
+        elif self.detected_type == "bulb" and self.bulb is not None:
+            with self.lock:
+                try:
+                    if state_name == "stop":
+                        stop_bulb_effects(self.bulb)
+                    else:
+                        _apply_bulb(self.bulb, state_name)
+                    return {"ip": self.ip, "ok": True}
+                except Exception:
+                    # Reconnect and retry once
+                    try:
+                        self.bulb = Bulb(self.ip, auto_on=False, effect="sudden")
+                        if state_name == "stop":
+                            stop_bulb_effects(self.bulb)
+                        else:
+                            _apply_bulb(self.bulb, state_name)
+                        return {"ip": self.ip, "ok": True}
+                    except Exception as e2:
+                        self.connected = False
+                        return {"ip": self.ip, "ok": False, "error": str(e2)}
+
+        return {"ip": self.ip, "ok": False, "error": f"unknown type: {self.detected_type}"}
+
+    def get_info(self):
+        """Return device info for /api/health etc."""
+        return {
+            "ip": self.ip,
+            "name": self.name,
+            "type": self.detected_type or self.declared_type,
+            "connected": self.connected,
+        }
 
 
-def _run_cube_state(state_name):
-    """Dispatch state to Cube Lite via synchronous TCP (no asyncio).
+# Device pool
+_devices: list[DeviceConnection] = []
+_devices_lock = Lock()
 
-    Cube protocol is fire-and-forget TCP commands. Async event loops
-    create serialization bottlenecks that drop rapid hook transitions.
-    Using a new TCP connection per dispatch is simpler and reliable.
-    """
-    global _cube_controller, _cube_loop
-    if _cube_controller is None:
+
+def _load_devices():
+    """Load device list from bulbs.json and connect to all of them."""
+    global _devices
+    try:
+        with open(BULBS_CONFIG_PATH) as f:
+            cfg = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"[relay] 无法读取 bulbs.json: {e}")
         return
 
-    if state_name == "stop":
-        _cube_controller.stop_effects_sync()
-    else:
-        _cube_controller.apply_state_sync(state_name)
+    bulbs = cfg.get("bulbs", [])
+    if not bulbs:
+        print("[relay] bulbs.json 中没有设备配置")
+        return
+
+    print(f"[relay] 从 bulbs.json 加载 {len(bulbs)} 个设备")
+
+    def _connect_one(b):
+        dev = DeviceConnection(
+            ip=b["ip"],
+            dev_type=b.get("type", "auto"),
+            name=b.get("name", ""),
+        )
+        dev.detect_and_connect()
+        with _devices_lock:
+            _devices.append(dev)
+
+    threads = []
+    for b in bulbs:
+        t = Thread(target=_connect_one, args=(b,), daemon=True)
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join(timeout=10)
+
+    connected = sum(1 for d in _devices if d.connected)
+    print(f"[relay] 设备就绪: {connected}/{len(_devices)}")
+
+
+def _apply_to_all(state_name: str):
+    """Broadcast a state to all connected devices."""
+    results = []
+    with _devices_lock:
+        devices_snapshot = list(_devices)
+    for dev in devices_snapshot:
+        try:
+            r = dev.apply_state(state_name)
+            results.append(r)
+        except Exception as e:
+            results.append({"ip": dev.ip, "ok": False, "error": str(e)})
+    return results
+
+
+def _stop_all():
+    """Stop effects on all devices."""
+    with _devices_lock:
+        devices_snapshot = list(_devices)
+    for dev in devices_snapshot:
+        try:
+            dev.apply_state("stop")
+        except Exception:
+            pass
+
+
+def _get_device_summary():
+    """Return summary of all devices for API responses."""
+    with _devices_lock:
+        return [d.get_info() for d in _devices]
+
 
 # ═══════════════ 多实例协调 ═══════════════
 
@@ -352,35 +474,25 @@ def aggregate(data):
             bp, best = p, st
     return best
 
-def apply_state(state, ip):
-    if not _BULB_AVAILABLE:
-        return {"ok": False, "error": "yeelight 包未安装"}
-    if _is_cube_lite and _cube_controller is not None:
-        try:
-            _run_cube_state(state)
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-    s = _STATES.get(state)
-    if not s:
-        return {"ok": False, "error": f"未知状态: {state}"}
-    try:
-        bulb = _get_bulb(ip)
-        _apply_locked(bulb, state)
-        return {"ok": True}
-    except Exception as e:
-        _persistent_bulb = None
-        try:
-            bulb = _get_bulb(ip)
-            _apply_locked(bulb, state)
-            return {"ok": True}
-        except Exception as e2:
-            return {"ok": False, "error": str(e2)}
+
+# ═══════════════ Cleanup ═══════════════
+
+def _cleanup():
+    _stop_all()
+
+
+atexit.register(_cleanup)
+
+try:
+    signal.signal(signal.SIGTERM, lambda *_: (_cleanup(), sys.exit(0)))
+    signal.signal(signal.SIGINT,  lambda *_: (_cleanup(), sys.exit(0)))
+except (AttributeError, ValueError):
+    pass
+
 
 # ═══════════════ HTTP Handler ═══════════════
 
 class RelayHandler(BaseHTTPRequestHandler):
-    bulb_ip = DEFAULT_IP
 
     def log_message(self, fmt, *args):
         pass  # 静默
@@ -402,47 +514,59 @@ class RelayHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/status":
             data = read_shared()
+            devices = _get_device_summary()
+            connected = sum(1 for d in devices if d["connected"])
             self._send_json({
-                "strategy": data.get("strategy","priority"),
-                "sessions": len(data.get("sessions",{})),
+                "strategy": data.get("strategy", "priority"),
+                "sessions": len(data.get("sessions", {})),
                 "yeelight": _BULB_AVAILABLE,
-                "bulb_ready": _persistent_bulb is not None,
-                "ok": True
+                "devices": devices,
+                "devices_total": len(devices),
+                "devices_connected": connected,
+                "ok": True,
             })
         elif path == "/api/health":
+            devices = _get_device_summary()
             self._send_json({
                 "ok": True,
                 "yeelight_available": _BULB_AVAILABLE,
-                "bulb_connected": _persistent_bulb is not None or _cube_controller is not None,
-                "bulb_ip": RelayHandler.bulb_ip,
-                "device_type": "cube_lite" if _is_cube_lite else "bulb",
                 "cube_available": _CUBE_AVAILABLE,
+                "devices": devices,
             })
 
         elif path == "/api/bulb-info":
-            """查询灯泡型号/名称（复用持久连接）"""
-            if _is_cube_lite:
+            """查询第一个连接设备的型号/名称"""
+            with _devices_lock:
+                dev = next((d for d in _devices if d.connected), None)
+            if dev is None:
+                self._send_json({"ok": False, "error": "没有已连接的设备"})
+                return
+            if dev.detected_type == "cube_lite":
                 self._send_json({
                     "ok": True,
+                    "ip": dev.ip,
                     "model": "yeelink.light.cubelite",
-                    "name": "Cube Smart Lamp Lite",
+                    "name": dev.name or "Cube Smart Lamp Lite",
                     "fw_ver": "",
                     "power": "on",
-                    "bright": str(_cube_controller._hw_brightness if _cube_controller else 0),
+                    "bright": str(dev.cube._hw_brightness if dev.cube else 0),
                     "device_type": "cube_lite",
                 })
                 return
             try:
-                bulb = _get_bulb(self.bulb_ip, reconnect=True)
-                props = bulb.get_properties()
-                self._send_json({
-                    "ok": True,
-                    "model": props.get("model", "unknown"),
-                    "name": props.get("name", ""),
-                    "fw_ver": props.get("fw_ver", ""),
-                    "power": props.get("power", ""),
-                    "bright": props.get("bright", ""),
-                })
+                if dev.bulb:
+                    props = dev.bulb.get_properties()
+                    self._send_json({
+                        "ok": True,
+                        "ip": dev.ip,
+                        "model": props.get("model", "unknown"),
+                        "name": props.get("name", ""),
+                        "fw_ver": props.get("fw_ver", ""),
+                        "power": props.get("power", ""),
+                        "bright": props.get("bright", ""),
+                    })
+                else:
+                    self._send_json({"ok": False, "error": "灯泡未连接"})
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)})
         else:
@@ -456,59 +580,82 @@ class RelayHandler(BaseHTTPRequestHandler):
         if path == "/api/direct":
             raw = body.get("state", "").lower()
             state = raw if raw == "stop" else _ALIASES.get(raw, raw)
-            # 先回 OK，再后台执行（避免客户端等灯泡响应超时）
-            if _is_cube_lite:
-                try:
-                    from .cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
-                except ImportError:
-                    from cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES  # type: ignore[no-redef]
-                resolved = CUBE_ALIASES.get(state, state)
-                s = STATE_DEFS.get(resolved)
-            else:
-                s = None if state == "stop" else _STATES.get(state)
-            if not s and state != "stop":
-                self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
-                return
-            self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
-            # 同步执行 Cube 操作（使用 threading.Lock 串行化）
-            if _is_cube_lite:
-                try:
-                    _run_cube_state(state)
-                except Exception:
-                    pass
-            else:
-                def _run():
+
+            # Validate state against available definitions
+            if state != "stop":
+                if state not in _STATES:
+                    # Also check cube patterns for cube-only states
+                    valid = False
                     try:
-                        bulb = _get_bulb(self.bulb_ip)
-                        _apply_locked(bulb, state)
-                    except Exception:
-                        pass
-                Thread(target=_run, daemon=True).start()
+                        from .cube_patterns import STATE_ALIASES as CUBE_ALIASES
+                    except ImportError:
+                        try:
+                            from cube_patterns import STATE_ALIASES as CUBE_ALIASES
+                        except ImportError:
+                            CUBE_ALIASES = {}
+                    resolved = CUBE_ALIASES.get(state, state)
+                    try:
+                        from .cube_patterns import STATE_DEFS
+                    except ImportError:
+                        try:
+                            from cube_patterns import STATE_DEFS
+                        except ImportError:
+                            STATE_DEFS = {}
+                    if resolved not in STATE_DEFS and state not in _STATES:
+                        self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
+                        return
+
+            label_text = state
+            if state == "stop":
+                label_text = "已终止灯效"
+            elif state in _STATES:
+                label_text = _STATES[state]["label"]
+            else:
+                try:
+                    from .cube_patterns import STATE_DEFS as CUBE_SD
+                except ImportError:
+                    try:
+                        from cube_patterns import STATE_DEFS as CUBE_SD
+                    except ImportError:
+                        CUBE_SD = {}
+                s = CUBE_SD.get(state)
+                if s:
+                    label_text = s.get("label", state)
+
+            self._send_json({"ok": True, "state": state, "label": label_text})
+
+            # Background: broadcast to all devices
+            def _run():
+                _apply_to_all(state)
+            Thread(target=_run, daemon=True).start()
 
         elif path == "/api/direct_sync":
-            """Same as /api/direct but synchronous — waits for Cube to respond."""
+            """Same as /api/direct but synchronous — waits for all devices."""
             raw = body.get("state", "").lower()
             state = raw if raw == "stop" else _ALIASES.get(raw, raw)
-            if _is_cube_lite:
+            if state != "stop" and state not in _STATES:
+                # Also check cube patterns
+                valid = False
                 try:
-                    from .cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                    from .cube_patterns import STATE_ALIASES as CUBE_ALIASES
+                    from .cube_patterns import STATE_DEFS as CUBE_SD
                 except ImportError:
-                    from cube_patterns import STATE_DEFS, STATE_ALIASES as CUBE_ALIASES
+                    try:
+                        from cube_patterns import STATE_ALIASES as CUBE_ALIASES
+                        from cube_patterns import STATE_DEFS as CUBE_SD
+                    except ImportError:
+                        CUBE_ALIASES, CUBE_SD = {}, {}
                 resolved = CUBE_ALIASES.get(state, state)
-                s = STATE_DEFS.get(resolved)
-            else:
-                s = None if state == "stop" else _STATES.get(state)
-            if not s and state != "stop":
-                self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
-                return
-            if _is_cube_lite:
-                try:
-                    _run_cube_state(state)
-                    self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
-                except Exception as e:
-                    self._send_json({"ok": False, "error": str(e)})
-            else:
-                self._send_json({"ok": True, "state": state, "label": s["label"] if s else "已终止灯效"})
+                if resolved not in CUBE_SD:
+                    self._send_json({"ok": False, "error": f"未知状态: {state}"}, 400)
+                    return
+
+            results = _apply_to_all(state)
+            label_text = state
+            if state in _STATES:
+                label_text = _STATES[state]["label"]
+            self._send_json({"ok": True, "state": state, "label": label_text,
+                             "results": results})
 
         elif path == "/api/state":
             raw = body.get("state", "").lower()
@@ -520,29 +667,27 @@ class RelayHandler(BaseHTTPRequestHandler):
             final = aggregate(data)
             label_text = ""
             if final:
-                if _is_cube_lite:
+                if final in _STATES:
+                    label_text = _STATES[final]["label"]
+                else:
                     try:
                         from .cube_patterns import STATE_DEFS as CUBE_STATE_DEFS
                     except ImportError:
-                        from cube_patterns import STATE_DEFS as CUBE_STATE_DEFS  # type: ignore[no-redef]
+                        try:
+                            from cube_patterns import STATE_DEFS as CUBE_STATE_DEFS
+                        except ImportError:
+                            CUBE_STATE_DEFS = {}
                     s = CUBE_STATE_DEFS.get(final)
-                else:
-                    s = _STATES.get(final)
-                label_text = s["label"] if s else final
+                    label_text = s["label"] if s else final
+
             if final:
                 self._send_json({"ok": True, "state": final, "label": label_text,
-                                 "strategy": data.get("strategy","priority"),
-                                 "sessions": len(data.get("sessions",{}))})
-                # 后台执行 Cube Lite 状态（同步 TCP dispatch，不需要 event loop）
-                if _is_cube_lite and _cube_controller is not None:
-                    _run_cube_state(final)
-                elif not _is_cube_lite:
-                    def _run():
-                        try:
-                            result = apply_state(final, self.bulb_ip)
-                        except Exception:
-                            pass
-                    Thread(target=_run, daemon=True).start()
+                                 "strategy": data.get("strategy", "priority"),
+                                 "sessions": len(data.get("sessions", {}))})
+                # Background: broadcast to all devices
+                def _run():
+                    _apply_to_all(final)
+                Thread(target=_run, daemon=True).start()
 
         elif path == "/api/discover":
             try:
@@ -575,7 +720,6 @@ class RelayHandler(BaseHTTPRequestHandler):
                     pass
 
                 # 2. mDNS/Zeroconf 发现 Cube Lite 设备
-                #    Cube Lite 注册为 yeelink-light-<model>-<id>._miio._udp.local.
                 try:
                     from zeroconf import ServiceBrowser, Zeroconf, ServiceStateChange
 
@@ -613,14 +757,14 @@ class RelayHandler(BaseHTTPRequestHandler):
                     browser = ServiceBrowser(
                         zc, "_miio._udp.local.", listener=listener,
                     )
-                    _time.sleep(2)  # wait for mDNS responses
+                    _time.sleep(2)
                     zc.close()
                     for entry in listener.found:
                         add_entry(entry)
                 except ImportError:
-                    pass  # zeroconf not installed — skip mDNS
+                    pass
                 except Exception:
-                    pass  # mDNS discovery failed silently
+                    pass
 
                 # 3. 无结果 → TCP 端口扫描回退
                 if not result:
@@ -658,12 +802,9 @@ class RelayHandler(BaseHTTPRequestHandler):
                             if r:
                                 add_entry(r)
 
-                # 4. 型号充实：对所有 unknown 型号的设备，查询 get_properties()
-                #    不只是 relay 自己的 IP —— 用临时连接查询后立即关闭
+                # 4. 型号充实
                 for entry in result:
                     ip = entry.get("ip", "")
-
-                    # 反向 DNS 获取主机名
                     if not entry.get("name") or entry.get("name", "").startswith("Yeelight-"):
                         try:
                             host = socket.gethostbyaddr(ip)
@@ -677,10 +818,8 @@ class RelayHandler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
 
-                    # 查询型号（所有 unknown 设备，不限于 relay IP）
                     if entry.get("model") == "unknown":
                         try:
-                            # 用独立连接查询，避免干扰 relay 持久连接
                             bulb = Bulb(ip, auto_on=False, effect="sudden", duration=0)
                             props = bulb.get_properties()
                             if props:
@@ -692,7 +831,6 @@ class RelayHandler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
 
-                    # 标记 Cube 设备
                     model = entry.get("model", "")
                     entry["is_cube"] = any(
                         p in model.lower() for p in ('cube', 'clt', 'cubelite')
@@ -704,50 +842,40 @@ class RelayHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/stop":
             try:
-                if _is_cube_lite:
-                    _run_cube_state("stop")
-                else:
-                    bulb = _get_bulb(self.bulb_ip)
-                    stop_effects(bulb)
+                _stop_all()
                 self._send_json({"ok": True})
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)})
 
         elif path == "/api/debug":
-            """同步测试灯泡/Cube Lite 连接，返回详细错误（失败时自动重连一次）"""
-            if _is_cube_lite:
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    ok = loop.run_until_complete(_cube_controller.connect())
-                    loop.close()
-                    if ok:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        loop.run_until_complete(_cube_controller.apply_state("idle"))
-                        loop.close()
-                        self._send_json({"ok": True, "msg": "Cube Lite 应显示 IDLE 文字"})
-                    else:
-                        self._send_json({"ok": False, "error": "Cube Lite 连接失败"})
-                except Exception as e:
-                    self._send_json({"ok": False, "error": str(e), "exception_type": type(e).__name__})
-            else:
-                def _try_debug():
-                    bulb = _get_bulb(self.bulb_ip)
-                    bulb.turn_on()
-                    bulb.set_rgb(0, 220, 80, effect="sudden")
-                    bulb.set_brightness(80, effect="sudden")
-                try:
-                    _try_debug()
-                    self._send_json({"ok": True, "msg": "灯泡应变为翠绿"})
-                except Exception as e:
-                    # 连接断开，重建 TCP 连接后重试
+            """同步测试所有设备连接"""
+            results = []
+            with _devices_lock:
+                devices_snapshot = list(_devices)
+            for dev in devices_snapshot:
+                if dev.detected_type == "cube_lite" and dev.cube:
                     try:
-                        _persistent_bulb = _get_bulb(self.bulb_ip, reconnect=True)
-                        _try_debug()
-                        self._send_json({"ok": True, "msg": "灯泡应变为翠绿 (重连后)"})
-                    except Exception as e2:
-                        self._send_json({"ok": False, "error": str(e2), "exception_type": type(e2).__name__})
+                        dev.cube.apply_state_sync("idle")
+                        results.append({"ip": dev.ip, "ok": True, "msg": "Cube Lite 应显示 IDLE 文字"})
+                    except Exception as e:
+                        results.append({"ip": dev.ip, "ok": False, "error": str(e)})
+                elif dev.detected_type == "bulb" and dev.bulb:
+                    try:
+                        dev.bulb.turn_on()
+                        dev.bulb.set_rgb(0, 220, 80, effect="sudden")
+                        dev.bulb.set_brightness(80, effect="sudden")
+                        results.append({"ip": dev.ip, "ok": True, "msg": "灯泡应变为翠绿"})
+                    except Exception as e:
+                        try:
+                            dev.bulb = Bulb(dev.ip, auto_on=False, effect="sudden")
+                            dev.bulb.turn_on()
+                            dev.bulb.set_rgb(0, 220, 80, effect="sudden")
+                            dev.bulb.set_brightness(80, effect="sudden")
+                            results.append({"ip": dev.ip, "ok": True, "msg": "灯泡应变为翠绿 (重连后)"})
+                        except Exception as e2:
+                            dev.connected = False
+                            results.append({"ip": dev.ip, "ok": False, "error": str(e2)})
+            self._send_json({"ok": True, "results": results})
 
         elif path == "/api/strategy":
             strategy = body.get("strategy", "").lower()
@@ -766,32 +894,18 @@ class RelayHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _is_cube_lite, _cube_controller, _cube_loop
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9877
-    bulb_ip = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_IP
-    RelayHandler.bulb_ip = bulb_ip
 
     if not _BULB_AVAILABLE:
         print("⚠ yeelight 包未安装: pip install yeelight")
+    if not _CUBE_AVAILABLE:
+        print("⚠ Cube Lite 支持不可用 (缺少 yeelight_cube_lite 模块)")
 
-    # 启动时预连接并检测设备类型
-    def _warmup():
-        global _is_cube_lite, _cube_controller, _cube_loop
-        try:
-            if _CUBE_AVAILABLE and _detect_device_type(bulb_ip):
-                if _cube_controller and _cube_controller._socket:
-                    print(f"[relay] Cube Lite 已就绪, IP={bulb_ip}")
-                else:
-                    print(f"[relay] Cube Lite 检测成功但 socket 未就绪")
-            else:
-                b = _get_bulb(bulb_ip)
-                b.turn_on()  # 真正触发 socket 连接
-                print(f"[relay] 检测到标准 Yeelight 灯泡")
-        except Exception:
-            pass
-    Thread(target=_warmup, daemon=True).start()
+    # 从 bulbs.json 加载并连接所有设备
+    _load_devices()
+
     server = HTTPServer(("", port), RelayHandler)
-    print(f"[relay] 端口 {port} 灯泡 {bulb_ip}")
+    print(f"[relay] 端口 {port}  设备数 {len(_devices)}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
